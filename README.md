@@ -12,6 +12,9 @@ upstream anchors drift.
 
 - `codexskin theme` / `codexhost theme` - list and **hot-switch** themes on
   every running Codex window (no restart)
+- `codexskin start --background` - launch everything detached from the
+  terminal (Codex + supervisor survive closing the console; `codexskin down`
+  stops them)
 - `codexskin import` - import a theme ZIP (native file dialog, nested
   `theme.json` detection, upsert by id)
 - `codexskin gallery` / `dir` - open the dreamskin.cc gallery or the theme

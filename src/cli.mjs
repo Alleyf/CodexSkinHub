@@ -681,11 +681,58 @@ async function stopSupervisor() {
 async function cmdStart(argv) {
   assertEngine();
   let theme = null;
+  let background = false;
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--theme" || argv[i] === "-t") theme = argv[++i] ?? die("--theme needs a value");
-    else die(`unknown argument: ${argv[i]} (supported: --theme <name>)`);
+    else if (argv[i] === "--background" || argv[i] === "-b") background = true;
+    else die(`unknown argument: ${argv[i]} (supported: --theme <name>, --background)`);
   }
   if (theme) await switchTheme(theme);
+
+  if (background) {
+    // Detached launch: the child survives the closing terminal. The supervisor
+    // daemon is NOT spawned here on purpose - the patched codexhost hook
+    // (superviseDetached) already self-heals it right after launch, and
+    // spawning a second one here would race it over the state file.
+    console.log("[codexskin] starting codexhost in the background ...");
+    const app = spawn("cmd.exe", ["/d", "/s", "/c", "codexhost"], {
+      detached: true, stdio: "ignore", windowsHide: true,
+    });
+    app.unref();
+    writeJsonNoBom(SKIN_STATE, {
+      ...(readJsonSafe(SKIN_STATE) ?? {}),
+      codexHostPid: app.pid,
+      startedAt: new Date().toISOString(),
+    });
+    // Wait for the hook's supervisor to claim the state file (app boot can
+    // take ~30s), with an idempotent fallback spawn if the hook never fires
+    // (e.g. older codexhost or a failed detached spawn).
+    let supPid = 0;
+    for (let i = 0; i < 60; i += 1) {
+      await new Promise((r) => setTimeout(r, 500));
+      const s = readJsonSafe(SKIN_STATE) ?? {};
+      supPid = Number(s.supervisePid) || 0;
+      if (supPid && (await processAlive(supPid))) break;
+      if (i === 59) {
+        const fb = spawn(process.execPath, [fileURLToPath(import.meta.url), "supervise"], {
+          detached: true, stdio: "ignore", windowsHide: true,
+        });
+        fb.unref();
+        await new Promise((r) => setTimeout(r, 1500));
+        supPid = Number((readJsonSafe(SKIN_STATE) ?? {}).supervisePid) || 0;
+      }
+    }
+    if (supPid && (await processAlive(supPid))) {
+      console.log("[codexskin] background mode active:");
+      console.log(`  codexhost  pid ${app.pid}`);
+      console.log(`  supervisor pid ${supPid} (logs: ${path.join(HUB_ROOT, "codexskin-supervise.log")})`);
+      console.log("  safe to close this terminal. Use `codexskin down` to stop, `codexskin status` to inspect.");
+    } else {
+      console.log(`[codexskin] codexhost detached (pid ${app.pid}) but no supervisor detected yet.`);
+      console.log("  If the endpoint never aligns, run `codexskin status` / `codexskin inject`.");
+    }
+    return;
+  }
 
   console.log("[codexskin] starting codexhost (foreground)...");
   const child = spawn("cmd.exe", ["/d", "/s", "/c", "codexhost"], { stdio: "inherit", windowsHide: false });
@@ -969,7 +1016,7 @@ if (invokedDirectly) {
     else if (cmd === "help" || cmd === "--help" || cmd === "-h") {
       console.log("codexskin - codexhost + Codex Dream Skin fusion CLI");
       console.log("  codexskin setup [--yes] [--dry-run] bootstrap missing prerequisites (Codex Desktop, @codexhost/cli, Dream Skin engine) and wire the integration");
-      console.log("  codexskin start [--theme <name>]   start codexhost with theme injection + supervisor");
+      console.log("  codexskin start [--theme <name>] [--background|-b]  start codexhost + injection supervisor (--background detaches, safe to close the terminal)");
       console.log("  codexskin supervise                standalone injector supervisor (used by codexhost hook)");
       console.log("  codexskin theme [<name>]           switch theme live / list themes");
       console.log("  codexskin import                   pick a theme ZIP and install it into the store");
