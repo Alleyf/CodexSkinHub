@@ -24,33 +24,14 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { homedir } from "node:os";
-// Single source of truth for platform logic (shim/startup content).
-// install.mjs used to duplicate all of it and drifted.
-import { shimContent, shimPath, startupEntryContent, startupEntryPath } from "./src/platform.mjs";
+// Single source of truth for platform logic (data home, DS root candidates,
+// shim/startup content). install.mjs used to duplicate all of it and drifted.
+import {
+  dataHome, dsRootCandidates, shimContent, shimPath, startupEntryContent, startupEntryPath,
+} from "./src/platform.mjs";
 
 const repo = dirname(fileURLToPath(import.meta.url));
 const IS_WIN = process.platform === "win32";
-
-// Per-OS data home: Windows %LOCALAPPDATA%, macOS ~/Library/Application
-// Support, Linux XDG data home.
-function dataHome() {
-  if (IS_WIN) return process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
-  if (process.platform === "darwin") return join(homedir(), "Library", "Application Support");
-  return process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
-}
-
-function dsRootCandidates() {
-  if (IS_WIN) return [join(dataHome(), "CodexDreamSkin")];
-  if (process.platform === "darwin") {
-    return [
-      join(dataHome(), "CodexDreamSkin"),
-      join(homedir(), "Applications", "CodexDreamSkin"),
-      join("/Applications", "CodexDreamSkin"),
-    ];
-  }
-  return [join(dataHome(), "CodexDreamSkin")];
-}
 
 // Never trust a single hardcoded node path (2026-09-08 multi-machine lesson):
 // probe the known engine-bundled layouts, then `node` on PATH, then give up
