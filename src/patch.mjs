@@ -325,22 +325,9 @@ for (const [name, file, patchFn, revertFn] of [
     continue;
   }
   if (original.includes("[codexskin]")) {
-    // Marker present - but the injected hook content may be stale (older
-    // CodexSkinHub). Re-derive the expected text via revert -> patch and
-    // refresh the file when it differs, so hook updates propagate without
-    // requiring a manual --revert first.
-    try {
-      const stock = revertFn(original).text;
-      const desired = patchFn(stock).text;
-      if (desired === original) {
-        log(`${name}: already patched (codexhost v${pkg.version})`);
-      } else {
-        writeChecked(file, desired);
-        log(`${name}: REFRESHED (hook content updated, codexhost v${pkg.version})`);
-      }
-    } catch (err) {
-      log(`${name}: already patched (codexhost v${pkg.version}); refresh skipped - ${err.message}`);
-    }
+    // The bin patch only embeds paths; the hook logic is loaded from the
+    // runtime home at run time, so hook updates propagate without re-patching.
+    log(`${name}: already patched (codexhost v${pkg.version})`);
     continue;
   }
   if (statusOnly) {

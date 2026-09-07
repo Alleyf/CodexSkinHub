@@ -25,11 +25,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
-// Single source of truth for platform logic (shim/startup content, engine
-// node probing). install.mjs used to duplicate all of it and drifted.
-import {
-  engineNodeBin, shimContent, shimPath, startupEntryContent, startupEntryPath,
-} from "./src/platform.mjs";
+// Single source of truth for platform logic (shim/startup content).
+// install.mjs used to duplicate all of it and drifted.
+import { shimContent, shimPath, startupEntryContent, startupEntryPath } from "./src/platform.mjs";
 
 const repo = dirname(fileURLToPath(import.meta.url));
 const IS_WIN = process.platform === "win32";
@@ -82,7 +80,8 @@ if (!dsRoot) {
   log(`WARNING: Dream Skin engine not found (probed: ${dsRootCandidates().join(", ")})`);
   log("WARNING: run `codexskin setup` to bootstrap it (auto-download + guided install), or install Codex Dream Skin manually first");
 }
-const node = engineNodeBin(dsRoot ?? dataHome());
+// Whatever node is running this installer is by definition a working node.
+const node = process.execPath;
 
 // 1. Runtime copy.
 //    Guard: when invoked from the runtime home itself (codexskin setup ->

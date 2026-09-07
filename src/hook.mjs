@@ -34,31 +34,14 @@ const RUNTIME_SRC = fs.existsSync(path.join(HUB_ROOT, "src", "cli.mjs"))
   ? path.join(HUB_ROOT, "src")
   : HERE;
 const DS_ROOT = process.env.CODEXSKIN_DS_ROOT ?? path.join(dataHome(), "CodexDreamSkin");
-// Engine-bundled node: probe the known bundled layouts per OS; if none exists
-// (different installer version, engine installed elsewhere), fall back to the
-// machine's own node on PATH, then whatever node is running us. The injector
-// only needs a plain node - never hardcode a single path.
+// Engine-bundled node when present, else whatever node is running us.
+// process.execPath is ALWAYS a working node (self-contained copy of the
+// platform.mjs logic - this file is loaded by the patched codexhost bin).
 function engineNodeBin(dsRoot) {
-  const candidates = process.platform === "win32"
-    ? [
-        path.join(dsRoot, "engine", "runtime", "node", "node.exe"),
-        path.join(dsRoot, "engine", "runtime", "nodejs", "node.exe"),
-        path.join(dsRoot, "engine", "runtime", "node", "bin", "node.exe"),
-      ]
-    : [
-        path.join(dsRoot, "engine", "runtime", "node", "bin", "node"),
-        path.join(dsRoot, "engine", "runtime", "node", "node"),
-      ];
-  for (const p of candidates) {
-    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch { /* probe next */ }
-  }
-  try {
-    const r = process.platform === "win32"
-      ? spawnSync("where", ["node"], { encoding: "utf8", windowsHide: true })
-      : spawnSync("sh", ["-c", "command -v node"], { encoding: "utf8" });
-    const first = String(r.stdout ?? "").split(/\r?\n/).map((s) => s.trim()).find(Boolean);
-    if (first && fs.existsSync(first)) return first;
-  } catch { /* keep going */ }
+  const bundled = process.platform === "win32"
+    ? path.join(dsRoot, "engine", "runtime", "node", "node.exe")
+    : path.join(dsRoot, "engine", "runtime", "node", "bin", "node");
+  try { fs.accessSync(bundled, fs.constants.X_OK); return bundled; } catch { /* fall through */ }
   return process.execPath;
 }
 const NODE_EXE = engineNodeBin(DS_ROOT);
@@ -68,9 +51,9 @@ const SUPERVISE_LOG = path.join(HUB_ROOT, "codexskin-supervise.log");
 const PATCHER = path.join(RUNTIME_SRC, "patch.mjs");
 
 function enginePresent() {
-  // NODE_EXE always resolves to an existing binary (bundled -> PATH -> the
-  // node running us), so only the CLI entry itself needs checking.
-  return fs.existsSync(CODEXSKIN) && fs.existsSync(NODE_EXE);
+  // NODE_EXE always resolves to an existing binary, so only the CLI entry
+  // itself needs checking.
+  return fs.existsSync(CODEXSKIN);
 }
 
 // Self-heal: if a partial drift happened (e.g. npm restored the package but

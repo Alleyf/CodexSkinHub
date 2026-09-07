@@ -53,50 +53,17 @@ export function hubRoot() {
   return path.join(dataHome(), "CodexSkinHub");
 }
 
-// The engine ships a bundled Node runtime, but installers/versions differ and
-// some machines never receive it (or install the engine elsewhere). Never
-// trust a single hardcoded path: probe the known bundled layouts, then fall
-// back to the machine's own Node (PATH first, then the node running us).
-// injector.mjs only needs a plain node, not the bundled one.
-export function engineNodeCandidates(dsRoot) {
-  if (IS_WIN) {
-    return [
-      path.join(dsRoot, "engine", "runtime", "node", "node.exe"),
-      path.join(dsRoot, "engine", "runtime", "nodejs", "node.exe"),
-      path.join(dsRoot, "engine", "runtime", "node", "bin", "node.exe"),
-    ];
-  }
-  return [
-    path.join(dsRoot, "engine", "runtime", "node", "bin", "node"),
-    path.join(dsRoot, "engine", "runtime", "node", "node"),
-    path.join(dsRoot, "engine", "runtime", "node", "node.exe"), // engine dir copied from a Windows box
-  ];
-}
-
-// Best-effort lookup of the machine's own Node via PATH. Returns null when
-// nothing usable is found.
-export function nodeFromPath() {
-  try {
-    const r = IS_WIN
-      ? spawnSync("where", ["node"], { encoding: "utf8", windowsHide: true })
-      : spawnSync("sh", ["-c", "command -v node"], { encoding: "utf8" });
-    const first = String(r.stdout ?? "").split(/\r?\n/).map((s) => s.trim()).find(Boolean);
-    if (first && fs.existsSync(first)) return first;
-  } catch { /* keep going */ }
-  return null;
-}
-
+// The injector only needs a plain node. Prefer the engine-bundled runtime;
+// otherwise use whatever node is running us - process.execPath is ALWAYS a
+// working node (when the shim launched us with the bundled node, execPath IS
+// the bundled node; when npm launched us, it is the user's own node). No
+// PATH probing, no candidate lists - anything more is uncertainty.
 export function engineNodeBin(dsRoot) {
-  for (const p of engineNodeCandidates(dsRoot)) {
-    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch { /* keep probing */ }
-  }
-  return nodeFromPath() ?? process.execPath;
-}
-
-// True when `node` is one of the engine-bundled layouts (i.e. NOT a fallback
-// to the machine's own Node). Used by doctor to annotate the result.
-export function engineNodeIsBundled(dsRoot, node) {
-  return engineNodeCandidates(dsRoot).includes(node);
+  const bundled = IS_WIN
+    ? path.join(dsRoot, "engine", "runtime", "node", "node.exe")
+    : path.join(dsRoot, "engine", "runtime", "node", "bin", "node");
+  try { fs.accessSync(bundled, fs.constants.X_OK); return bundled; } catch { /* fall through */ }
+  return process.execPath;
 }
 
 // ---------------------------------------------------------------------------
@@ -241,8 +208,8 @@ export function shimPath() {
 // `hubRoot` and `dsRoot` are the resolved runtime locations; the shim must be
 // pure ASCII (Windows GBK code-page lesson). The Windows content uses
 // %LOCALAPPDATA% env vars (not baked-in absolute paths) so it survives profile
-// relocation, and re-executes the CLI with the best node available:
-// engine-bundled first, then any `node` on PATH.
+// relocation. Engine-bundled node first, plain `node` from PATH as fallback -
+// the CLI itself handles any further resolution via process.execPath.
 export function shimContent(hubRoot, dsRoot) {
   const cli = path.join(hubRoot, "src", "cli.mjs");
   if (IS_WIN) {
@@ -250,10 +217,7 @@ export function shimContent(hubRoot, dsRoot) {
       "@echo off",
       "setlocal",
       'set "CSHUB_NODE=%LOCALAPPDATA%\\CodexDreamSkin\\engine\\runtime\\node\\node.exe"',
-      'if exist "%CSHUB_NODE%" goto run',
-      'where node >nul 2>nul || (echo [codexskin] no Node runtime found - install Node.js or the Dream Skin engine & exit /b 1)',
-      'set "CSHUB_NODE=node"',
-      ":run",
+      'if not exist "%CSHUB_NODE%" set "CSHUB_NODE=node"',
       '"%CSHUB_NODE%" "%LOCALAPPDATA%\\CodexSkinHub\\src\\cli.mjs" %*',
       "exit /b %ERRORLEVEL%",
       "",
@@ -279,17 +243,13 @@ export function startupEntryPath() {
 
 export function startupEntryContent(hubRoot, dsRoot) {
   if (IS_WIN) {
-    // Never hardcode-only: if the engine-bundled node is missing, silently
-    // fall back to `node` on PATH; if neither exists, exit quietly (a Startup
-    // .cmd must never pop an error window on logon). Paths use %LOCALAPPDATA%
-    // env vars so the entry survives profile relocation.
+    // Startup .cmd must never pop an error window on logon: bundled node
+    // first, `node` from PATH as fallback, silent exit when neither exists.
     return [
       "@echo off",
       'set "CSHUB_NODE=%LOCALAPPDATA%\\CodexDreamSkin\\engine\\runtime\\node\\node.exe"',
-      'if exist "%CSHUB_NODE%" goto run',
-      'where node >nul 2>nul || exit /b 0',
-      'set "CSHUB_NODE=node"',
-      ":run",
+      'if not exist "%CSHUB_NODE%" set "CSHUB_NODE=node"',
+      'if "%CSHUB_NODE%"=="node" where node >nul 2>nul || exit /b 0',
       'start "CodexSkinHub" /min "%CSHUB_NODE%" "%LOCALAPPDATA%\\CodexSkinHub\\src\\cli.mjs" supervise',
       "",
     ].join("\r\n");

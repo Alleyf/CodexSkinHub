@@ -170,8 +170,8 @@ npm uninstall -g codexskin-hub
 **Q: `start` 报 `cannot remove the temporary AppX environment: 找不到元素 (0x80070490)`？**
 这是 codexhost 启动器在激活 Codex Desktop 后清理调试环境时失败，通常是该机器的 AppX 包注册状态异常或首次启动崩溃所致。运行 **`codexskin repair`**：它会重新为当前用户注册 `OpenAI.Codex` 包、清理残留的 `cua_node .staging-*` 目录，然后重试 `codexskin start`。仍失败时，从开始菜单手动启动一次 Codex Desktop 让其完全加载后退出再试；个别机器需要重启后重跑 repair。
 
-**Q: doctor 报 `MISS engine node`，或者我的 Node 装在非系统盘 / nvm 管理的目录？**
-v0.3.1 起不再写死任何 Node 路径。查找顺序为：引擎自带运行时（`engine\runtime\node\`，兼容多种目录布局）→ 机器 PATH 上的 `node`（`where node`，兼容任意盘符与 nvm/volta）→ 当前正在运行 CLI 的 Node。找不到引擎自带运行时只会降级并给出标注，不会阻断使用；开机自启脚本同样带此回退（两者都缺失时静默退出，登录时不会弹窗报错）。`doctor` 会显示实际采用的 Node 及其来源。
+**Q: doctor 报 `MISS engine node`（v0.3.0 及更早），或者我的 Node 装在非系统盘 / nvm 管理的目录？**
+旧版用 `NODE_EXE !== process.execPath` 判断引擎 node 是否存在——当 shim 恰好用引擎自带的 node 启动 CLI 时两者天然相等，被误判为「没找到」（v0.3.1 已修复该判断）。v0.3.2 起逻辑收敛为一句话：优先用引擎自带运行时（`engine\runtime\node\`），否则直接用**当前正在运行 CLI 的那个 node**——它无论如何都是一个能用的 node，不需要任何额外探测。Node 装在任意盘符 / nvm / volta 管理的目录都不影响；开机自启脚本在两者皆缺失时静默退出，登录时不会弹窗。`doctor` 会显示实际采用的 Node 路径。
 
 ## 项目结构
 

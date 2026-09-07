@@ -78,11 +78,8 @@ function assertEngine() {
   for (const p of [INJECTOR, THEME_DIR]) {
     if (!fs.existsSync(p)) die(`Dream Skin engine incomplete, missing: ${p}`);
   }
-  // engineNodeBin already falls back to PATH node / the running node, so this
-  // only dies when literally no Node runtime exists on the machine.
-  if (!fs.existsSync(NODE_EXE)) {
-    die(`no usable Node runtime for the injector (probed the engine-bundled node, node on PATH and the running node)`);
-  }
+  // No node check here: NODE_EXE falls back to process.execPath, which by
+  // definition exists - the injector always has a usable node.
 }
 
 function execFileText(cmd, args) {
@@ -895,11 +892,10 @@ async function cmdDoctor() {
   const check = (label, ok, detail = "") =>
     console.log(`  ${ok ? "OK  " : "MISS"} ${label}${detail ? ` - ${detail}` : ""}`);
   check("hub root", fs.existsSync(HUB_ROOT), HUB_ROOT);
-  // A fallback node (PATH / running node) is functionally fine for the
-  // injector - report OK but annotate it so the user knows the engine-bundled
-  // runtime is not what we are using.
-  const nodeBundled = plat.engineNodeIsBundled(DS_ROOT, NODE_EXE);
-  check("engine node", fs.existsSync(NODE_EXE), NODE_EXE + (nodeBundled ? "" : "  [fallback: engine-bundled node not found, using this one instead]"));
+  // NODE_EXE is the engine-bundled node when present, else process.execPath
+  // (the node running this CLI) - both are usable, so this shows the resolved
+  // binary rather than judging it.
+  check("engine node", fs.existsSync(NODE_EXE), NODE_EXE);
   check("injector", fs.existsSync(INJECTOR), INJECTOR);
   check("theme library", fs.existsSync(THEMES_DIR), THEMES_DIR);
   check("active theme dir", fs.existsSync(THEME_DIR), THEME_DIR);
