@@ -26,6 +26,11 @@ codex-host 集成中的主题管理能力抽取为独立项目，可单独版本
 安装目录，也不改 [@codexhost/cli](https://www.npmjs.com/package/@codexhost/cli)
 源码仓库——一切通过运行时补丁完成，由锚点式幂等补丁器施加，上游锚点漂移时**拒绝写入并明确报错**，绝不写脏文件。
 
+<p align="center">
+  <img src="./docs/images/settings-panel.png" alt="应用内 Dream Skin 设置面板：状态芯片 + 主题卡片 + 导入/打开/Gallery 按钮" width="720">
+</p>
+<p align="center"><sub>应用内「Dream Skin」设置面板：状态芯片、主题卡片热切换、Import ZIP / Open folder / Gallery</sub></p>
+
 ## 功能
 
 - 🎨 **主题热切换** — `codexskin theme <名称>`，基于 CDP 注入，所有运行中的 Codex 窗口**即时生效，无需重启**
