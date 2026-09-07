@@ -14,6 +14,17 @@
 //   supervisor discovers the live endpoint (ChatGPT.exe listening sockets ->
 //   /json/version) and (re)starts the injector against it whenever needed.
 
+// Platform guard: every integration step below (PATH shim, AppX repair, the
+// Windows-only Dream Skin engine) assumes win32. Fail loudly instead of
+// erroring somewhere deep in the middle of a command.
+if (process.platform !== "win32" && !process.env.CODEXSKIN_ALLOW_NON_WIN32) {
+  console.error(`[codexskin] unsupported platform: ${process.platform}.`);
+  console.error("  codexskin currently supports Windows 10/11 only - the upstream");
+  console.error("  Dream Skin engine has no Linux build and the installer/patcher");
+  console.error("  targets Windows. See README 'Compatibility' for details.");
+  process.exit(1);
+}
+
 import { spawn, execFile, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import fsp from "node:fs/promises";

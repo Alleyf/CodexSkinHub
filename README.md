@@ -147,7 +147,7 @@ npm uninstall -g codexskin-hub
 
 ## 兼容性
 
-- 操作系统：**Windows 10/11**（引擎为 Windows 专用）
+- 操作系统：**Windows 10/11 x64 / arm64**。macOS 与 Linux 暂不支持——上游 Dream Skin 引擎没有 Linux 发行版（Windows `.exe` + macOS `.dmg`），且本项目的补丁器、PATH 垫片、AppX 修复、安装引导均针对 Windows 实现；macOS 移植需上游生态成熟后另行规划。
 - 已对 codexhost **0.6.0** windows-x64 做字节级验证。上游未来版本移动锚点时，补丁器会**大声失败且不写文件**——运行 `codexskin doctor` 查看漂移详情，并到仓库提 issue 等适配。
 
 ## 常见问题
