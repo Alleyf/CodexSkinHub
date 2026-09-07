@@ -1,6 +1,10 @@
 # CodexSkinHub
 
 <p align="center">
+  <img src="https://raw.githubusercontent.com/Alleyf/CodexSkinHub/main/docs/images/banner.svg" alt="CodexSkinHub - codexhost 主题管理中心" width="720">
+</p>
+
+<p align="center">
   <strong>给 codexhost 启动的 Codex 一套可独立分发的主题管理能力。</strong><br>
   主题热切换 · ZIP 导入 · 主题库 · 应用内设置面板 · 全自动安装引导
 </p>

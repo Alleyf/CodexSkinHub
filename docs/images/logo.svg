@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#171034"/>
+      <stop offset=".55" stop-color="#31175e"/>
+      <stop offset="1" stop-color="#6d28d9"/>
+    </linearGradient>
+    <linearGradient id="cardA" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f472b6"/>
+      <stop offset="1" stop-color="#fb923c"/>
+    </linearGradient>
+    <linearGradient id="cardB" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#34d399"/>
+    </linearGradient>
+    <linearGradient id="cardC" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a78bfa"/>
+      <stop offset="1" stop-color="#f0abfc"/>
+    </linearGradient>
+    <radialGradient id="glow" cx=".5" cy=".42" r=".65">
+      <stop offset="0" stop-color="#c084fc" stop-opacity=".35"/>
+      <stop offset="1" stop-color="#c084fc" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- app tile -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bg)"/>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#glow)"/>
+  <rect x="22" y="22" width="468" height="468" rx="106" fill="none" stroke="#ffffff" stroke-opacity=".08" stroke-width="3"/>
+
+  <!-- hub orbit -->
+  <ellipse cx="256" cy="268" rx="196" ry="88" fill="none" stroke="#e9d5ff" stroke-opacity=".22" stroke-width="3" stroke-dasharray="2 12" stroke-linecap="round" transform="rotate(-16 256 268)"/>
+  <circle cx="82" cy="292" r="7" fill="#f0abfc"/>
+  <circle cx="424" cy="228" r="7" fill="#22d3ee"/>
+  <circle cx="366" cy="342" r="5" fill="#fbcfe8" fill-opacity=".9"/>
+
+  <!-- theme cards: theme library deck -->
+  <g transform="rotate(-14 200 262)">
+    <rect x="122" y="168" width="156" height="196" rx="22" fill="#ffffff" fill-opacity=".14" stroke="#ffffff" stroke-opacity=".18" stroke-width="2"/>
+    <rect x="138" y="186" width="124" height="34" rx="12" fill="url(#cardA)" opacity=".85"/>
+  </g>
+  <g transform="rotate(11 320 258)">
+    <rect x="242" y="162" width="156" height="196" rx="22" fill="#ffffff" fill-opacity=".18" stroke="#ffffff" stroke-opacity=".2" stroke-width="2"/>
+    <rect x="258" y="180" width="124" height="34" rx="12" fill="url(#cardB)" opacity=".85"/>
+  </g>
+
+  <!-- active theme card (front) -->
+  <g filter="none">
+    <rect x="181" y="152" width="150" height="212" rx="24" fill="#fdfcff"/>
+    <rect x="181" y="152" width="150" height="212" rx="24" fill="none" stroke="#ffffff" stroke-opacity=".55" stroke-width="2.5"/>
+    <rect x="181" y="152" width="150" height="52" rx="24" fill="url(#cardC)"/>
+    <rect x="181" y="184" width="150" height="20" fill="url(#cardC)"/>
+    <!-- window chrome dots -->
+    <circle cx="205" cy="178" r="5" fill="#ffffff" fill-opacity=".9"/>
+    <circle cx="222" cy="178" r="5" fill="#ffffff" fill-opacity=".55"/>
+    <circle cx="239" cy="178" r="5" fill="#ffffff" fill-opacity=".35"/>
+    <!-- skin preview -->
+    <rect x="201" y="226" width="110" height="76" rx="12" fill="url(#cardA)" opacity=".92"/>
+    <rect x="201" y="226" width="110" height="76" rx="12" fill="url(#glow)"/>
+    <!-- text lines -->
+    <rect x="201" y="318" width="76" height="9" rx="4.5" fill="#31175e" opacity=".55"/>
+    <rect x="201" y="336" width="110" height="9" rx="4.5" fill="#31175e" opacity=".28"/>
+  </g>
+
+  <!-- hub node: CDP injection -->
+  <g>
+    <line x1="256" y1="268" x2="128" y2="330" stroke="#f0abfc" stroke-opacity=".55" stroke-width="2.5"/>
+    <line x1="256" y1="268" x2="392" y2="322" stroke="#67e8f9" stroke-opacity=".55" stroke-width="2.5"/>
+    <circle cx="256" cy="268" r="0" fill="none"/>
+  </g>
+
+  <!-- breathing spark -->
+  <path d="M394 108 l7 20 20 7 -20 7 -7 20 -7 -20 -20 -7 20 -7 z" fill="#fde68a" opacity=".95"/>
+  <path d="M118 128 l5 14 14 5 -14 5 -5 14 -5 -14 -14 -5 14 -5 z" fill="#c4b5fd" opacity=".8"/>
+</svg>
