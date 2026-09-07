@@ -1,6 +1,6 @@
 {
   "name": "codexskin-hub",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Standalone Dream Skin theme management for codexhost-launched Codex: theme hot-switch, ZIP import, gallery, in-app settings page - non-invasive to Codex Dream Skin and codex-host",
   "type": "module",
   "bin": {
@@ -34,5 +34,13 @@
     "windows"
   ],
   "author": "alleyf",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Alleyf/CodexSkinHub.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Alleyf/CodexSkinHub/issues"
+  },
+  "homepage": "https://github.com/Alleyf/CodexSkinHub#readme"
 }

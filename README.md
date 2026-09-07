@@ -27,7 +27,7 @@ codex-host 集成中的主题管理能力抽取为独立项目，可单独版本
 源码仓库——一切通过运行时补丁完成，由锚点式幂等补丁器施加，上游锚点漂移时**拒绝写入并明确报错**，绝不写脏文件。
 
 <p align="center">
-  <img src="./docs/images/settings-panel.png" alt="应用内 Dream Skin 设置面板：状态芯片 + 主题卡片 + 导入/打开/Gallery 按钮" width="720">
+  <img src="https://raw.githubusercontent.com/Alleyf/CodexSkinHub/main/docs/images/settings-panel.png" alt="应用内 Dream Skin 设置面板：状态芯片 + 主题卡片 + 导入/打开/Gallery 按钮" width="720">
 </p>
 <p align="center"><sub>应用内「Dream Skin」设置面板：状态芯片、主题卡片热切换、Import ZIP / Open folder / Gallery</sub></p>
 
