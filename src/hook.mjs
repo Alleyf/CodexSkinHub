@@ -7,26 +7,55 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+// Platform-aware data home (Windows: %LOCALAPPDATA%, macOS:
+// ~/Library/Application Support, Linux: XDG data home), kept inline because
+// this file is loaded by the patched codexhost bin and should stay
+// self-contained.
+function dataHome() {
+  if (process.platform === "win32") {
+    return process.env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local");
+  }
+  if (process.platform === "darwin") {
+    return path.join(os.homedir(), "Library", "Application Support");
+  }
+  return process.env.XDG_DATA_HOME ?? path.join(os.homedir(), ".local", "share");
+}
 
 // CodexSkinHub runtime home (config/state/logs); Dream Skin engine stays in
 // its own directory and is only referenced. Sibling sources are resolved
 // relative to this file, preferring the installed runtime copy over the repo.
-const HUB_ROOT = path.join(process.env.LOCALAPPDATA ?? "", "CodexSkinHub");
+const HUB_ROOT = path.join(dataHome(), "CodexSkinHub");
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RUNTIME_SRC = fs.existsSync(path.join(HUB_ROOT, "src", "cli.mjs"))
   ? path.join(HUB_ROOT, "src")
   : HERE;
-const DS_ROOT = path.join(process.env.LOCALAPPDATA ?? "", "CodexDreamSkin");
-const NODE_EXE = path.join(DS_ROOT, "engine", "runtime", "node", "node.exe");
+const DS_ROOT = process.env.CODEXSKIN_DS_ROOT ?? path.join(dataHome(), "CodexDreamSkin");
+// Engine-bundled node: exact layout on Windows, probed candidates elsewhere;
+// falls back to whatever node is running us.
+function engineNodeBin(dsRoot) {
+  const candidates = process.platform === "win32"
+    ? [path.join(dsRoot, "engine", "runtime", "node", "node.exe")]
+    : [
+        path.join(dsRoot, "engine", "runtime", "node", "bin", "node"),
+        path.join(dsRoot, "engine", "runtime", "node", "node"),
+      ];
+  for (const p of candidates) {
+    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch { /* probe next */ }
+  }
+  return process.execPath;
+}
+const NODE_EXE = engineNodeBin(DS_ROOT);
 const CODEXSKIN = path.join(RUNTIME_SRC, "cli.mjs");
 const SKIN_STATE = path.join(HUB_ROOT, "codexskin.json");
 const SUPERVISE_LOG = path.join(HUB_ROOT, "codexskin-supervise.log");
 const PATCHER = path.join(RUNTIME_SRC, "patch.mjs");
 
 function enginePresent() {
-  return fs.existsSync(NODE_EXE) && fs.existsSync(CODEXSKIN);
+  return NODE_EXE !== process.execPath && fs.existsSync(CODEXSKIN);
 }
 
 // Self-heal: if a partial drift happened (e.g. npm restored the package but
@@ -35,8 +64,7 @@ function enginePresent() {
 function healDetached() {
   if (!fs.existsSync(PATCHER)) return;
   try {
-    const node = fs.existsSync(NODE_EXE) ? NODE_EXE : process.execPath;
-    const child = spawn(node, [PATCHER, "--quiet"], {
+    const child = spawn(NODE_EXE, [PATCHER, "--quiet"], {
       detached: true,
       stdio: "ignore",
       windowsHide: true,
@@ -49,7 +77,7 @@ function healDetached() {
 
 export function runTheme(argv) {
   if (!enginePresent()) {
-    console.error("codexhost theme: Codex Dream Skin engine not found in %LOCALAPPDATA%\\CodexDreamSkin.");
+    console.error(`codexhost theme: Codex Dream Skin engine not found under ${DS_ROOT}.`);
     process.exitCode = 1;
     return;
   }

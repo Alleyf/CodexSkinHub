@@ -28,6 +28,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { homedir, tmpdir } from "node:os";
 import { findCodexhostPackage } from "./discover.mjs";
+import { dataHome, hubRoot } from "./platform.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const quiet = process.argv.includes("--quiet");
@@ -39,12 +40,24 @@ function log(msg) {
 }
 
 // ---------------------------------------------------------------------------
+const CODEXHOST_PLATFORM_PACKAGES = [
+  "cli-win32-x64", "cli-win32-arm64",
+  "cli-darwin-arm64", "cli-darwin-x64",
+  "cli-linux-x64", "cli-linux-arm64",
+];
+
 function targetsFor(pkgDir) {
+  let renderer = null;
+  for (const plat of CODEXHOST_PLATFORM_PACKAGES) {
+    const candidate = join(pkgDir, "node_modules", "@codexhost", plat, "app", "renderer-extension.js");
+    if (existsSync(candidate)) {
+      renderer = candidate;
+      break;
+    }
+  }
   return {
     bin: join(pkgDir, "bin", "codexhost.js"),
-    renderer: join(
-      pkgDir, "node_modules", "@codexhost", "cli-win32-x64", "app", "renderer-extension.js",
-    ),
+    renderer, // null when the platform subpackage is absent
   };
 }
 
@@ -78,16 +91,16 @@ function writeChecked(filePath, text) {
 //   A2: superviseDetached() on launch
 //   A3: --help extension (best effort, never fatal)
 // ---------------------------------------------------------------------------
-function binBlock1(eol) {
+function binBlock1(eol, hookCandidates) {
+  const literals = hookCandidates.map((p) => JSON.stringify(p)).join(",\n  ");
   return toEol(
     `// [codexskin] Codex Dream Skin theme integration, maintained by CodexSkinHub.
-// The hook lives in %LOCALAPPDATA%\\CodexSkinHub\\hook.mjs (fallback: the legacy
-// %LOCALAPPDATA%\\CodexDreamSkin\\codexhost-hook.mjs); if neither file exists or
+// The hook lives in the CodexSkinHub runtime home (fallback: the legacy
+// CodexDreamSkin directory); if neither file exists or
 // the engine is uninstalled, codexhost behaves exactly like stock.
 let dreamSkinHook = null;
 const dreamSkinHookCandidates = [
-  path.join(process.env.LOCALAPPDATA ?? "", "CodexSkinHub", "src", "hook.mjs"),
-  path.join(process.env.LOCALAPPDATA ?? "", "CodexDreamSkin", "codexhost-hook.mjs"),
+  ${literals},
 ];
 const dreamSkinHookPath = dreamSkinHookCandidates.find((p) => existsSync(p));
 if (dreamSkinHookPath) {
@@ -144,7 +157,11 @@ function patchBin(text) {
   if (i1 === -1) {
     throw new Error('bin anchor 1 (startupTrace("entry")) not found - upstream changed');
   }
-  text = text.slice(0, i1) + binBlock1(eol) + text.slice(i1);
+  const hookCandidates = [
+    join(hubRoot(), "src", "hook.mjs"),
+    join(dataHome(), "CodexDreamSkin", "codexhost-hook.mjs"),
+  ];
+  text = text.slice(0, i1) + binBlock1(eol, hookCandidates) + text.slice(i1);
 
   const a2 = 'startupTrace("spawning Launcher");';
   const i2 = text.indexOf(a2);
@@ -280,6 +297,11 @@ for (const [name, file, patchFn, revertFn] of [
   ["bin", bin, patchBin, revertBin],
   ["renderer", renderer, patchRenderer, revertRenderer],
 ]) {
+  if (!file) {
+    log(`renderer: no platform subpackage found (probed win32/darwin/linux x64+arm64)`);
+    failed = true;
+    continue;
+  }
   if (!existsSync(file)) {
     log(`${name}: FILE MISSING (${file})`);
     failed = true;

@@ -14,15 +14,18 @@
 //   supervisor discovers the live endpoint (ChatGPT.exe listening sockets ->
 //   /json/version) and (re)starts the injector against it whenever needed.
 
-// Platform guard: every integration step below (PATH shim, AppX repair, the
-// Windows-only Dream Skin engine) assumes win32. Fail loudly instead of
-// erroring somewhere deep in the middle of a command.
-if (process.platform !== "win32" && !process.env.CODEXSKIN_ALLOW_NON_WIN32) {
-  console.error(`[codexskin] unsupported platform: ${process.platform}.`);
-  console.error("  codexskin currently supports Windows 10/11 only - the upstream");
-  console.error("  Dream Skin engine has no Linux build and the installer/patcher");
-  console.error("  targets Windows. See README 'Compatibility' for details.");
+// Platform gate. Windows is fully supported; macOS is experimental (upstream
+// engine ships a .dmg, but this port has not been exercised on real Macs);
+// Linux is hard-blocked because upstream Dream Skin has no Linux engine.
+if (process.platform === "linux" && !process.env.CODEXSKIN_ALLOW_NON_WIN32) {
+  console.error("[codexskin] Linux is not supported: the upstream Codex Dream Skin");
+  console.error("  engine has no Linux build (Windows .exe / macOS .dmg only).");
+  console.error("  Set CODEXSKIN_ALLOW_NON_WIN32=1 to override at your own risk.");
   process.exit(1);
+}
+if (process.platform === "darwin" && !process.env.CODEXSKIN_QUIET) {
+  console.error("[codexskin] note: macOS support is experimental and untested on real hardware;");
+  console.error("  report issues at https://github.com/Alleyf/CodexSkinHub/issues");
 }
 
 import { spawn, execFile, spawnSync } from "node:child_process";
@@ -33,11 +36,13 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { findCodexhostPackage } from "./discover.mjs";
+import * as plat from "./platform.mjs";
 
 // CodexSkinHub owns its own state; the Dream Skin engine (injector, node
-// runtime, theme library) stays under %LOCALAPPDATA%\CodexDreamSkin and is
-// only referenced. Override the engine root via config.json if needed.
-const HUB_ROOT = path.join(process.env.LOCALAPPDATA ?? "", "CodexSkinHub");
+// runtime, theme library) stays in its per-OS data home (Windows:
+// %LOCALAPPDATA%\CodexDreamSkin, macOS: ~/Library/Application Support/...)
+// and is only referenced. Resolution order: config.json -> env -> probe.
+const HUB_ROOT = plat.hubRoot();
 function loadConfig() {
   try {
     return JSON.parse(fs.readFileSync(path.join(HUB_ROOT, "config.json"), "utf8"));
@@ -46,9 +51,12 @@ function loadConfig() {
   }
 }
 const CFG = loadConfig();
-const DS_ROOT = CFG.dreamSkinRoot ?? path.join(process.env.LOCALAPPDATA ?? "", "CodexDreamSkin");
+const DS_ROOT = process.env.CODEXSKIN_DS_ROOT
+  ?? CFG.dreamSkinRoot
+  ?? plat.dsRootCandidates().find((p) => fs.existsSync(path.join(p, "engine", "scripts", "injector.mjs")))
+  ?? plat.dsRootCandidates()[0];
 const ENGINE = path.join(DS_ROOT, "engine");
-const NODE_EXE = path.join(ENGINE, "runtime", "node", "node.exe");
+const NODE_EXE = plat.engineNodeBin(DS_ROOT);
 const INJECTOR = path.join(ENGINE, "scripts", "injector.mjs");
 const THEME_DIR = path.join(DS_ROOT, "active-theme");
 const THEMES_DIR = path.join(DS_ROOT, "themes");
@@ -67,8 +75,11 @@ function die(message) {
 }
 
 function assertEngine() {
-  for (const p of [NODE_EXE, INJECTOR, THEME_DIR]) {
+  for (const p of [INJECTOR, THEME_DIR]) {
     if (!fs.existsSync(p)) die(`Dream Skin engine incomplete, missing: ${p}`);
+  }
+  if (NODE_EXE === process.execPath) {
+    die(`engine Node runtime not found under ${ENGINE} (looked for the bundled node binary)`);
   }
 }
 
@@ -80,8 +91,17 @@ function execFileText(cmd, args) {
   });
 }
 
-function readJsonSafe(file) {
-  try {
+// Launch the codexhost CLI. On Windows `codexhost` resolves to a .cmd shim,
+// which Node refuses to exec without a shell, hence cmd.exe. On unix the npm
+// global bin script (node shebang) spawns directly via PATH.
+function spawnCodexhost(options) {
+  if (plat.isWindows()) {
+    return spawn("cmd.exe", ["/d", "/s", "/c", "codexhost"], options);
+  }
+  return spawn("codexhost", [], options);
+}
+
+function readJsonSafe(file) {  try {
     const raw = fs.readFileSync(file, "utf8");
     return JSON.parse(raw.replace(/^\uFEFF/, ""));
   } catch {
@@ -94,29 +114,11 @@ function writeJsonNoBom(file, value) {
 }
 
 async function getChatPids() {
-  const out = await execFileText("tasklist", ["/FI", "IMAGENAME eq ChatGPT.exe", "/FO", "CSV", "/NH"]);
-  const pids = [];
-  for (const line of out.split(/\r?\n/)) {
-    const m = line.match(/^"ChatGPT\.exe","(\d+)"/);
-    if (m) pids.push(Number(m[1]));
-  }
-  return pids;
+  return plat.findDesktopPids(execFileText);
 }
 
 async function getListeningPorts(pids) {
-  if (pids.length === 0) return [];
-  const out = await execFileText("netstat", ["-ano", "-p", "TCP"]);
-  const ports = new Set();
-  for (const line of out.split(/\r?\n/)) {
-    if (!/LISTENING/i.test(line)) continue;
-    const parts = line.trim().split(/\s+/);
-    if (parts.length < 5) continue;
-    const [, local, , state, pid] = parts; // TCP  127.0.0.1:2977  0.0.0.0:0  LISTENING  1234
-    if (!/LISTENING/i.test(state ?? "")) continue;
-    if (!/^(127\.0\.0\.1|\[::1\]):\d+$/i.test(local ?? "")) continue;
-    if (pids.includes(Number(pid))) ports.add(Number(local.split(":").pop()));
-  }
-  return [...ports].sort((a, b) => a - b);
+  return plat.listeningPortsOfPids(pids, execFileText);
 }
 
 function probeCdp(port) {
@@ -156,8 +158,12 @@ async function discoverCdp() {
 
 function processAlive(pid) {
   if (!pid || pid <= 0) return Promise.resolve(false);
+  if (!plat.isWindows()) {
+    // signal 0 = existence probe, works for any pid we own visibility of
+    try { process.kill(pid, 0); return Promise.resolve(true); } catch { return Promise.resolve(false); }
+  }
   return execFileText("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"]).then(
-    (out) => /node\.exe/i.test(out),
+    (out) => /\.exe/i.test(out),
   );
 }
 
@@ -171,7 +177,7 @@ async function liveInjectorPid() {
 async function stopInjector() {
   const { pid } = await liveInjectorPid();
   if (pid) {
-    await execFileText("taskkill", ["/PID", String(pid), "/T", "/F"]);
+    await plat.killTree(pid, execFileText);
     console.log(`[codexskin] stopped old injector (pid ${pid})`);
   }
 }
@@ -298,8 +304,7 @@ function startSupervisorLoop({ log = () => {}, intervalMs = 4000 } = {}) {
 
 async function openThemesDir() {
   await fsp.mkdir(THEMES_DIR, { recursive: true });
-  const child = spawn("explorer.exe", [THEMES_DIR], { detached: true, stdio: "ignore" });
-  child.unref();
+  plat.openPath(THEMES_DIR);
   console.log(`[codexskin] opened theme folder: ${THEMES_DIR}`);
   return { opened: THEMES_DIR };
 }
@@ -309,38 +314,41 @@ function openGallery(url) {
   if (!target.startsWith(URL_PREFIX_ALLOW)) {
     throw new Error(`only ${URL_PREFIX_ALLOW} URLs may be opened from the bridge`);
   }
-  const child = spawn(
-    "cmd.exe",
-    ["/d", "/s", "/c", "start", "", target],
-    { detached: true, stdio: "ignore", windowsHide: true },
-  );
-  child.unref();
+  plat.openUrl(target);
   console.log(`[codexskin] opening ${target} in the default browser`);
   return { opened: target };
 }
 
-// Native file picker (PowerShell WinForms, STA). Pure ASCII on purpose: PS 5.1
-// parses this under the system's ANSI code page when double-clicked flows
-// through cmd, and non-ASCII breaks it (learned the hard way).
+// Native file picker: PowerShell WinForms (Windows), osascript (macOS),
+// zenity (Linux). Delegates to platform.mjs.
 async function pickZipViaDialog() {
-  const script = [
-    "Add-Type -AssemblyName System.Windows.Forms | Out-Null",
-    "$d = New-Object System.Windows.Forms.OpenFileDialog",
-    "$d.Filter = 'Theme archive (*.zip)|*.zip|All files (*.*)|*.*'",
-    "$d.Title = 'Import Dream Skin theme ZIP'",
-    "if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($d.FileName) }",
-  ].join("; ");
-  return await new Promise((resolve, reject) => {
-    execFile(
-      "powershell.exe",
-      ["-NoProfile", "-STA", "-NonInteractive", "-Command", script],
-      { windowsHide: true, timeout: 10 * 60 * 1000, maxBuffer: 1 << 20 },
-      (err, stdout) => {
-        if (err && !stdout) reject(new Error(`file dialog failed: ${String(err.message).split("\n")[0]}`));
-        else resolve(String(stdout ?? "").trim());
-      },
-    );
+  return plat.pickZipViaDialog(execFileText);
+}
+
+// ZIP extraction: Windows ships bsdtar at System32\tar.exe (handles ZIP and
+// drive-letter paths; a GNU tar earlier in PATH would treat "C:\..." as a
+// remote host). macOS has bsdtar as `tar`; Linux gets `unzip` with a tar
+// fallback.
+function execFileStrict(cmd, args) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { windowsHide: true, timeout: 5 * 60 * 1000 }, (err, stdout, stderr) => {
+      if (err) reject(new Error(`${cmd}: ${String(stderr || err.message).split("\n")[0]}`));
+      else resolve(String(stdout));
+    });
   });
+}
+
+async function extractZip(zip, dest) {
+  if (plat.isWindows()) {
+    const systemTar = path.join(process.env.SystemRoot ?? "C:\\windows", "System32", "tar.exe");
+    await execFileStrict(systemTar, ["-xf", zip, "-C", dest]);
+    return;
+  }
+  try {
+    await execFileStrict("unzip", ["-q", "-o", zip, "-d", dest]);
+  } catch {
+    await execFileStrict("tar", ["-xf", zip, "-C", dest]); // bsdtar on macOS
+  }
 }
 
 function sanitizeDirName(name) {
@@ -396,11 +404,7 @@ async function runImportFlow() {
       return;
     }
     tmp = await fsp.mkdtemp(path.join(HUB_ROOT, "import-"));
-    // Use the absolute path: a GNU tar earlier in PATH would treat "C:\..." as
-    // a remote host ("Cannot connect to C: resolve failed"). System32's bsdtar
-    // handles ZIP archives and drive-letter paths natively.
-    const systemTar = path.join(process.env.SystemRoot ?? "C:\\windows", "System32", "tar.exe");
-    await execFileText(systemTar, ["-xf", zip, "-C", tmp]);
+    await extractZip(zip, tmp);
     const root = await findThemeRoot(tmp);
     if (!root) throw new Error("theme.json not found in the archive - not a Dream Skin theme");
     const theme = await installThemeFromDir(root, path.basename(zip).replace(/\.zip$/i, ""));
@@ -683,7 +687,7 @@ async function stopSupervisor() {
   const skin = readJsonSafe(SKIN_STATE) ?? {};
   const pid = Number(skin.supervisePid);
   if (pid && (await processAlive(pid))) {
-    await execFileText("taskkill", ["/PID", String(pid), "/T", "/F"]);
+    await plat.killTree(pid, execFileText);
     console.log(`[codexskin] stopped supervisor (pid ${pid})`);
   }
   const skinNow = { ...skin, supervisePid: 0 };
@@ -707,9 +711,7 @@ async function cmdStart(argv) {
     // (superviseDetached) already self-heals it right after launch, and
     // spawning a second one here would race it over the state file.
     console.log("[codexskin] starting codexhost in the background ...");
-    const app = spawn("cmd.exe", ["/d", "/s", "/c", "codexhost"], {
-      detached: true, stdio: "ignore", windowsHide: true,
-    });
+    const app = spawnCodexhost({ detached: true, stdio: "ignore", windowsHide: true });
     app.unref();
     writeJsonNoBom(SKIN_STATE, {
       ...(readJsonSafe(SKIN_STATE) ?? {}),
@@ -747,7 +749,7 @@ async function cmdStart(argv) {
   }
 
   console.log("[codexskin] starting codexhost (foreground)...");
-  const child = spawn("cmd.exe", ["/d", "/s", "/c", "codexhost"], { stdio: "inherit", windowsHide: false });
+  const child = spawnCodexhost({ stdio: "inherit", windowsHide: false });
   writeJsonNoBom(SKIN_STATE, {
     ...(readJsonSafe(SKIN_STATE) ?? {}),
     codexHostPid: child.pid,
@@ -771,7 +773,7 @@ async function cmdStart(argv) {
   });
   process.on("SIGINT", () => {
     console.log("\n[codexskin] stopping codexhost...");
-    execFile("taskkill", ["/PID", String(child.pid), "/T", "/F"], () => process.exit(0));
+    plat.killTree(child.pid, execFileText).then(() => process.exit(0), () => process.exit(0));
   });
 }
 
@@ -810,7 +812,7 @@ async function cmdDown() {
   await stopSupervisor();
   const skin = readJsonSafe(SKIN_STATE) ?? {};
   if (skin.codexHostPid && (await processAlive(skin.codexHostPid))) {
-    await execFileText("taskkill", ["/PID", String(skin.codexHostPid), "/T", "/F"]);
+    await plat.killTree(skin.codexHostPid, execFileText);
     console.log(`[codexskin] stopped codexhost (pid ${skin.codexHostPid})`);
   }
   await stopInjector();
@@ -891,13 +893,13 @@ async function cmdDoctor() {
   const check = (label, ok, detail = "") =>
     console.log(`  ${ok ? "OK  " : "MISS"} ${label}${detail ? ` - ${detail}` : ""}`);
   check("hub root", fs.existsSync(HUB_ROOT), HUB_ROOT);
-  check("engine node", fs.existsSync(NODE_EXE), NODE_EXE);
+  check("engine node", NODE_EXE !== process.execPath, NODE_EXE);
   check("injector", fs.existsSync(INJECTOR), INJECTOR);
   check("theme library", fs.existsSync(THEMES_DIR), THEMES_DIR);
   check("active theme dir", fs.existsSync(THEME_DIR), THEME_DIR);
   const { entries } = await listThemes();
   console.log(`  ${entries.length} theme(s) installed`);
-  const shim = path.join(process.env.USERPROFILE ?? "", ".local", "bin", "codexskin.cmd");
+  const shim = plat.shimPath();
   check("codexskin shim", fs.existsSync(shim), shim);
   const skin = readJsonSafe(SKIN_STATE) ?? {};
   const supPid = skin.supervisePid ?? skin.injectorPid;
@@ -920,7 +922,7 @@ function proxyArgs() {
 }
 
 function curlJson(url) {
-  const r = spawnSync("curl.exe", ["-sSLf", "--max-time", "30", ...proxyArgs(), url], {
+  const r = spawnSync(plat.isWindows() ? "curl.exe" : "curl", ["-sSLf", "--max-time", "30", ...proxyArgs(), url], {
     encoding: "utf8", windowsHide: true, shell: false,
   });
   if (r.status !== 0 || !r.stdout) return null;
@@ -929,20 +931,27 @@ function curlJson(url) {
 
 function downloadFile(url, dest, label) {
   console.log(`[codexskin] downloading ${label} ...`);
-  const r = spawnSync("curl.exe", ["-L", "-f", "--retry", "2", "--max-time", "600", "-o", dest, ...proxyArgs(), url], {
+  const r = spawnSync(plat.isWindows() ? "curl.exe" : "curl", ["-L", "-f", "--retry", "2", "--max-time", "600", "-o", dest, ...proxyArgs(), url], {
     stdio: "inherit", windowsHide: true, shell: false,
   });
   return r.status === 0 && fs.existsSync(dest);
 }
 
 function detectCodexDesktop() {
-  const r = spawnSync(
-    "powershell.exe",
-    ["-NoProfile", "-Command", "(Get-AppxPackage -Name 'OpenAI.Codex*').InstallLocation"],
-    { encoding: "utf8", windowsHide: true, shell: false },
-  );
-  const loc = String(r.stdout ?? "").trim().split(/\r?\n/)[0];
-  return loc && r.status === 0 ? loc : null;
+  if (plat.isWindows()) {
+    const r = spawnSync(
+      "powershell.exe",
+      ["-NoProfile", "-Command", "(Get-AppxPackage -Name 'OpenAI.Codex*').InstallLocation"],
+      { encoding: "utf8", windowsHide: true, shell: false },
+    );
+    const loc = String(r.stdout ?? "").trim().split(/\r?\n/)[0];
+    return loc && r.status === 0 ? loc : null;
+  }
+  // macOS: the desktop app is an ordinary /Applications bundle.
+  for (const app of ["/Applications/Codex.app", "/Applications/ChatGPT.app"]) {
+    if (fs.existsSync(app)) return app;
+  }
+  return null;
 }
 
 function detectCodexhost() {
@@ -963,16 +972,20 @@ function ask(question) {
 async function cmdSetup(flags = {}) {
   const dry = flags.has("dry-run");
   const assumeYes = flags.has("yes");
+  const isWin = plat.isWindows();
   console.log("[codexskin] setup - bootstrap prerequisites (Codex Desktop / codexhost / Dream Skin)");
-  if (process.platform !== "win32") die("setup only supports Windows");
+  if (plat.IS_LINUX && !process.env.CODEXSKIN_ALLOW_NON_WIN32) {
+    die("setup: Linux is not supported - the upstream Dream Skin engine has no Linux build");
+  }
 
-  // 1. Codex Desktop (Microsoft Store, MSIX OpenAI.Codex).
+  // 1. Codex Desktop. Windows: MSIX via winget / Microsoft Store. macOS: an
+  // /Applications bundle installed by the user from OpenAI's site.
   let desktop = detectCodexDesktop();
   if (desktop) {
     console.log(`  OK   Codex Desktop - ${desktop}`);
   } else if (dry) {
-    console.log("  MISS Codex Desktop (would open Microsoft Store and guide installation)");
-  } else {
+    console.log("  MISS Codex Desktop (would open the store / download page and guide installation)");
+  } else if (isWin) {
     console.log("  MISS Codex Desktop - attempting winget / Microsoft Store ...");
     const w = spawnSync("winget", ["search", "OpenAI Codex", "--source", "msstore"], {
       encoding: "utf8", windowsHide: true, shell: true,
@@ -987,8 +1000,16 @@ async function cmdSetup(flags = {}) {
       desktop = detectCodexDesktop();
     }
     for (let i = 0; !desktop && i < 3; i++) {
-      spawnSync("cmd.exe", ["/c", "start", "", "ms-windows-store://search/?query=OpenAI%20Codex"], { windowsHide: true, shell: false });
+      plat.openUrl("ms-windows-store://search/?query=OpenAI%20Codex");
       await ask("Microsoft Store opened. Install \"Codex\" (or ChatGPT) there, launch it once, quit it, then press Enter to re-check ...");
+      desktop = detectCodexDesktop();
+    }
+    console.log(desktop ? `  OK   Codex Desktop - ${desktop}` : "  MISS Codex Desktop still missing - codexhost cannot launch without it");
+  } else {
+    console.log("  MISS Codex Desktop - opening the OpenAI download page ...");
+    plat.openUrl("https://chatgpt.com/download");
+    for (let i = 0; !desktop && i < 3; i++) {
+      await ask("Install the Codex / ChatGPT desktop app (drag to /Applications), launch it once, quit it, then press Enter to re-check ...");
       desktop = detectCodexDesktop();
     }
     console.log(desktop ? `  OK   Codex Desktop - ${desktop}` : "  MISS Codex Desktop still missing - codexhost cannot launch without it");
@@ -1007,31 +1028,40 @@ async function cmdSetup(flags = {}) {
     console.log(detectCodexhost() ? "  OK   @codexhost/cli" : "  MISS @codexhost/cli install failed - check network / proxy and re-run setup");
   }
 
-  // 3. Codex Dream Skin engine (GitHub release installer).
+  // 3. Codex Dream Skin engine (GitHub release; Inno Setup .exe on Windows,
+  // .dmg on macOS).
   if (detectDsEngine()) {
     console.log(`  OK   Dream Skin engine - ${DS_ROOT}`);
   } else if (dry) {
-    console.log("  MISS Dream Skin engine (would download the latest Setup.exe from GitHub Releases and run the installer)");
+    console.log("  MISS Dream Skin engine (would download the latest installer from GitHub Releases)");
   } else {
     console.log("  -> fetching latest Codex Dream Skin release ...");
     const rel = curlJson(DS_REPO_API);
-    const asset = rel?.assets?.find((a) => /^CodexDreamSkin-Setup-.*\.exe$/i.test(a.name));
+    const asset = rel?.assets?.find((a) =>
+      isWin ? /^CodexDreamSkin-Setup-.*\.exe$/i.test(a.name) : /^CodexDreamSkin-v\d.*\.dmg$/i.test(a.name),
+    );
     if (!asset) {
-      console.log("  MISS could not resolve a Windows installer from GitHub Releases - open https://github.com/Fei-Away/Codex-Dream-Skin/releases manually");
+      console.log(`  MISS could not resolve a ${isWin ? "Windows" : "macOS"} installer from GitHub Releases - open https://github.com/Fei-Away/Codex-Dream-Skin/releases manually`);
     } else {
-      const dest = path.join(process.env.TEMP ?? HUB_ROOT, asset.name);
+      const dest = path.join(plat.isWindows() ? (process.env.TEMP ?? HUB_ROOT) : "/tmp", asset.name);
       console.log(`  -> ${asset.name} (${Math.round((asset.size ?? 0) / 1048576)} MB, tag ${rel.tag_name ?? "?"})`);
       const ok = assumeYes || (await ask(`Download and run the Dream Skin installer? [Y/n] `)).match(/^n/i) === null;
       if (!ok) {
         console.log("  skipped Dream Skin installer");
       } else if (downloadFile(asset.browser_download_url, dest, asset.name) && fs.existsSync(dest)) {
-        console.log("  -> launching installer (close Codex first if it is running) ...");
-        const inst = spawnSync(dest, assumeYes ? ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"] : [], {
-          stdio: assumeYes ? "ignore" : "inherit", windowsHide: false, shell: false,
-        });
-        if (assumeYes && inst.status !== 0) console.log(`  installer exited with status ${inst.status}`);
+        if (isWin) {
+          console.log("  -> launching installer (close Codex first if it is running) ...");
+          const inst = spawnSync(dest, assumeYes ? ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"] : [], {
+            stdio: assumeYes ? "ignore" : "inherit", windowsHide: false, shell: false,
+          });
+          if (assumeYes && inst.status !== 0) console.log(`  installer exited with status ${inst.status}`);
+        } else {
+          console.log("  -> mounting the .dmg - drag the app / engine into Applications when it opens ...");
+          plat.openPath(dest);
+          await ask("Finish the Dream Skin installation, then press Enter to re-check ...");
+        }
         if (detectDsEngine()) console.log(`  OK   Dream Skin engine - ${DS_ROOT}`);
-        else console.log("  MISS engine not detected yet - finish the installer wizard, then re-run `codexskin setup`");
+        else console.log("  MISS engine not detected yet - finish the installer, then re-run `codexskin setup`");
       } else {
         console.log("  MISS download failed - check network / proxy and re-run setup");
       }

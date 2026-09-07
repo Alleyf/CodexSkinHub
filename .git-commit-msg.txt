@@ -1,0 +1,13 @@
+feat(cross-platform): macOS support (experimental), Linux hard-blocked with clear message (v0.3.0)
+
+- new src/platform.mjs: per-OS data homes, engine-node probing, desktop
+  process discovery (tasklist/netstat vs pgrep/lsof), killTree, openPath/
+  openUrl, native ZIP picker, per-OS shim + startup entries
+- cli.mjs: platform gate (win=full, mac=experimental, linux=refused),
+  cmd.exe/taskkill/explorer/PowerShell-dialog/System32-tar replaced by
+  platform layer, setup branches win (winget/Inno) vs mac (dmg guide)
+- patch.mjs: renderer target probes all codexhost platform subpackages,
+  injected hook candidates resolved at patch time (no LOCALAPPDATA env)
+- hook.mjs/install.mjs: platform-aware roots, node binary, shims
+  (.cmd vs POSIX sh + chmod), LaunchAgent / systemd startup entries
+- package.json: os [win32, darwin]; README platform matrix updated

@@ -147,8 +147,11 @@ npm uninstall -g codexskin-hub
 
 ## 兼容性
 
-- 操作系统：**Windows 10/11 x64 / arm64**。macOS 与 Linux 暂不支持——上游 Dream Skin 引擎没有 Linux 发行版（Windows `.exe` + macOS `.dmg`），且本项目的补丁器、PATH 垫片、AppX 修复、安装引导均针对 Windows 实现；macOS 移植需上游生态成熟后另行规划。
-- 已对 codexhost **0.6.0** windows-x64 做字节级验证。上游未来版本移动锚点时，补丁器会**大声失败且不写文件**——运行 `codexskin doctor` 查看漂移详情，并到仓库提 issue 等适配。
+- **Windows 10/11（x64 / arm64）**：完整支持，已对 codexhost **0.6.0** windows-x64 做字节级验证。
+- **macOS（实验性）**：上游 Dream Skin 引擎提供 `.dmg`、@codexhost/cli 提供 darwin 二进制，`codexskin setup` 会下载 dmg 并引导安装。**注意：本移植尚未在真实 macOS 硬件上验证**，欢迎反馈 issue。
+- **Linux**：不支持——上游 Dream Skin 引擎没有 Linux 发行版（Windows `.exe` + macOS `.dmg`），在上游补齐前无解。
+
+上游未来版本移动锚点时，补丁器会**大声失败且不写文件**——运行 `codexskin doctor` 查看漂移详情，并到仓库提 issue 等适配。
 
 ## 常见问题
 
@@ -171,6 +174,7 @@ npm uninstall -g codexskin-hub
 
 ```
 src/cli.mjs               CLI + supervisor + CDP 桥（setup/start/theme/import/gallery/status/down/doctor）
+src/platform.mjs          平台抽象层：数据目录 / 进程发现 / killTree / 垫片 / 自启（Windows + macOS）
 src/hook.mjs              被补丁后的 codexhost bin 加载（主题分发 + supervisor 自愈拉起）
 src/patch.mjs             锚点式幂等补丁器：apply / status / --revert
 src/discover.mjs          定位全局 @codexhost/cli（兼容 nvm-windows / 自定义 npm prefix）
