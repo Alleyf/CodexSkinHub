@@ -766,8 +766,9 @@ async function cmdDoctor() {
   const shim = path.join(process.env.USERPROFILE ?? "", ".local", "bin", "codexskin.cmd");
   check("codexskin shim", fs.existsSync(shim), shim);
   const skin = readJsonSafe(SKIN_STATE) ?? {};
-  const supAlive = skin.injectorPid ? await processAlive(skin.injectorPid) : false;
-  check("supervisor", supAlive, skin.injectorPid ? `pid ${skin.injectorPid}` : "not running");
+  const supPid = skin.supervisePid ?? skin.injectorPid;
+  const supAlive = supPid ? await processAlive(supPid) : false;
+  check("supervisor", supAlive, supPid ? `pid ${supPid}` : "not running");
   // Patch status of the installed codexhost package.
   const appData = process.env.APPDATA ?? path.join(process.env.USERPROFILE ?? "", "AppData", "Roaming");
   const pkgDir = path.join(appData, "npm", "node_modules", "@codexhost", "cli");
