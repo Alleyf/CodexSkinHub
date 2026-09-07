@@ -164,6 +164,9 @@ npm uninstall -g codexskin-hub
 **Q: `codexskin start -b` 之后关了终端，主题还在吗？**
 在。后台模式下的 Codex 与 supervisor 均已脱离终端，`codexskin status` 可随时查看，`codexskin down` 一键停止。
 
+**Q: `start` 报 `cannot remove the temporary AppX environment: 找不到元素 (0x80070490)`？**
+这是 codexhost 启动器在激活 Codex Desktop 后清理调试环境时失败，通常是该机器的 AppX 包注册状态异常或首次启动崩溃所致。运行 **`codexskin repair`**：它会重新为当前用户注册 `OpenAI.Codex` 包、清理残留的 `cua_node .staging-*` 目录，然后重试 `codexskin start`。仍失败时，从开始菜单手动启动一次 Codex Desktop 让其完全加载后退出再试；个别机器需要重启后重跑 repair。
+
 ## 项目结构
 
 ```

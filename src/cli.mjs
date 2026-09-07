@@ -751,6 +751,10 @@ async function cmdStart(argv) {
     clearInterval(supervisor);
     clearInterval(bridge);
     console.log(`[codexskin] codexhost exited (code ${code}).`);
+    if (code === 1) {
+      console.log("  If the output above shows an AppX error (e.g. 0x80070490 / element not found),");
+      console.log("  run `codexskin repair` to fix the Codex Desktop registration, then start again.");
+    }
     process.exit(code ?? 0);
   });
   process.on("SIGINT", () => {
@@ -799,6 +803,75 @@ async function cmdDown() {
   }
   await stopInjector();
   console.log("[codexskin] done. Codex Desktop itself is left running.");
+}
+
+// Repair Codex Desktop AppX state after a failed launcher activation. The
+// codexhost launcher activates the packaged app via IPackageDebugSettings; on
+// some machines DisableDebugging fails with 0x80070490 (element not found) -
+// typically broken per-user package registration or a crashed first launch
+// that left stale cua_node staging dirs behind. Both are fixable from here.
+function psRun(script, timeoutMs = 180000) {
+  return new Promise((resolve) => {
+    execFile(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", script],
+      { windowsHide: true, timeout: timeoutMs },
+      (err, stdout, stderr) => resolve({ err, out: String(stdout ?? ""), errText: String(stderr ?? "") }),
+    );
+  });
+}
+
+async function cmdRepair() {
+  assertEngine();
+  if (process.platform !== "win32") die("repair is only needed on Windows");
+
+  console.log("[codexskin] repair - checking Codex Desktop AppX registration ...");
+  const info = await psRun(
+    "Get-AppxPackage OpenAI.Codex* | Select-Object Name, Version, PackageFullName, Status | Format-List",
+  );
+  const pkgText = info.out.trim();
+  console.log(pkgText ? pkgText.split("\n").map((l) => `  ${l.trim()}`).filter(Boolean).join("\n") : "  (no OpenAI.Codex package visible to the current user)");
+  if (!pkgText) {
+    console.log("[codexskin] Codex Desktop is NOT registered for the current user.");
+    console.log("  Install it from the Microsoft Store (or `winget install msstore:OpenAI.Codex`),");
+    console.log("  launch it once, quit it, then re-run `codexskin repair`.");
+    process.exit(1);
+  }
+
+  console.log("[codexskin] re-registering the package for the current user ...");
+  const rereg = await psRun(
+    'Get-AppxPackage OpenAI.Codex* | ForEach-Object { Add-AppxPackage -DisableDevelopmentMode -Register "$($_.InstallLocation)\\AppxManifest.xml" -ErrorAction Continue; "  re-registered: $($_.PackageFullName)" }',
+  );
+  const reregText = (rereg.out + rereg.errText).trim();
+  // PowerShell writes errors in the console OEM encoding (garbled here); show
+  // only ASCII lines and surface known HRESULTs as friendly hints instead.
+  const asciiLines = reregText.split("\n").filter((l) => /^[\x20-\x7E\r]*$/.test(l) && l.trim());
+  console.log(asciiLines.join("\n") || "  (no output from re-registration)");
+  if (/0x80073D02/i.test(reregText)) {
+    console.log("  -> Codex Desktop (or its background process) is still running.");
+    console.log("     Quit it completely (tray icon too), then re-run `codexskin repair`.");
+  } else if (/0x80073CF0|0x80070490/i.test(reregText)) {
+    console.log("  -> re-registration still failing; reboot the machine and re-run `codexskin repair`.");
+  }
+
+  console.log("[codexskin] cleaning stale cua_node staging dirs ...");
+  const stagingRoot = path.join(process.env.LOCALAPPDATA ?? "", "OpenAI", "Codex", "runtimes", "cua_node");
+  let removed = 0;
+  try {
+    for (const entry of await fsp.readdir(stagingRoot)) {
+      if (!entry.startsWith(".staging-")) continue;
+      await fsp.rm(path.join(stagingRoot, entry), { recursive: true, force: true });
+      console.log(`  removed stale staging dir: ${entry}`);
+      removed += 1;
+    }
+  } catch {
+    console.log("  no cua_node runtime dir yet (normal on a fresh install)");
+  }
+  if (!removed) console.log("  no stale staging dirs found");
+
+  console.log("[codexskin] repair finished. Now try `codexskin start` again.");
+  console.log("  If it still exits with an AppX error: launch Codex Desktop once manually");
+  console.log("  from the Start menu, let it fully load, quit it completely, and retry.");
 }
 
 async function cmdDoctor() {
@@ -1012,6 +1085,7 @@ if (invokedDirectly) {
     else if (cmd === "import") await runImportFlow();
     else if (cmd === "import-worker") await runImportFlow();
     else if (cmd === "doctor") await cmdDoctor();
+    else if (cmd === "repair") await cmdRepair();
     else if (cmd === "setup") await cmdSetup(new Set(rest.map((a) => a.replace(/^--+/, ""))));
     else if (cmd === "help" || cmd === "--help" || cmd === "-h") {
       console.log("codexskin - codexhost + Codex Dream Skin fusion CLI");
@@ -1025,6 +1099,7 @@ if (invokedDirectly) {
       console.log("  codexskin status                   show endpoint / injector / theme state");
       console.log("  codexskin inject                   align injector to the running Codex once");
       console.log("  codexskin doctor                   health-check the whole integration");
+      console.log("  codexskin repair                   fix Codex Desktop AppX state after a failed launch");
       console.log("  codexskin setup                    bootstrap prerequisites + wire the integration");
       console.log("  codexskin down                     stop supervisor, codexhost wrapper and injector");
     } else die(`unknown command: ${cmd}. Try "codexskin help".`);
