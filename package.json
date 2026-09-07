@@ -6,8 +6,17 @@
   "bin": {
     "codexskin": "src/cli.mjs"
   },
+  "files": [
+    "src",
+    "install.mjs",
+    "uninstall.mjs",
+    "README.md"
+  ],
+  "os": [
+    "win32"
+  ],
   "scripts": {
-    "install": "node install.mjs",
+    "postinstall": "node install.mjs",
     "uninstall": "node uninstall.mjs",
     "doctor": "node src/cli.mjs doctor",
     "patch": "node src/patch.mjs",
@@ -17,5 +26,13 @@
   "engines": {
     "node": ">=20.11"
   },
+  "keywords": [
+    "codex",
+    "codexhost",
+    "theme",
+    "dream-skin",
+    "windows"
+  ],
+  "author": "alleyf",
   "license": "MIT"
 }

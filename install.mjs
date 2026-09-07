@@ -51,9 +51,14 @@ const dsRoot = existsSync(join(DS_ROOT_DEFAULT, "engine", "scripts", "injector.m
   ? DS_ROOT_DEFAULT
   : null;
 if (!dsRoot) {
-  die(`Dream Skin engine not found at ${DS_ROOT_DEFAULT} - install Codex Dream Skin first`);
+  // Degrade gracefully: a public `npm i -g` must not hard-fail just because
+  // the optional Codex Dream Skin engine is not installed yet. The runtime
+  // copy and the codexskin CLI still work; doctor/status will show MISSes
+  // until the engine (and codexhost) are present.
+  log(`WARNING: Dream Skin engine not found at ${DS_ROOT_DEFAULT}`);
+  log("WARNING: install Codex Dream Skin first, then re-run `npm i -g codexskin-hub` (or `node install.mjs`)");
 }
-const nodeExe = join(dsRoot, "engine", "runtime", "node", "node.exe");
+const nodeExe = dsRoot ? join(dsRoot, "engine", "runtime", "node", "node.exe") : "";
 const node = existsSync(nodeExe) ? nodeExe : "node";
 
 // 1. Runtime copy.
@@ -69,20 +74,26 @@ writeFileSync(
 );
 
 // 3. Legacy state migration (active theme id + supervisor state).
-const legacyState = join(dsRoot, "codexskin.json");
+const legacyState = dsRoot ? join(dsRoot, "codexskin.json") : null;
 const hubState = join(HUB_ROOT, "codexskin.json");
-if (existsSync(legacyState) && !existsSync(hubState)) {
+if (legacyState && existsSync(legacyState) && !existsSync(hubState)) {
   writeFileSync(hubState, readFileSync(legacyState));
   log("migrated codexskin.json from the legacy CodexDreamSkin directory");
 }
 
 // 4. Patches (idempotent; refuses on anchor drift).
-const r = spawnSync(node, [join(HUB_ROOT, "src", "patch.mjs"), ...process.argv.slice(2).filter((a) => a !== "--startup")], {
-  stdio: "inherit",
-  windowsHide: true,
-});
-if (r.status !== 0) {
-  die("patching failed - see output above; codexhost may have changed upstream");
+//    Skipped entirely when the Dream Skin engine is absent - the hook would
+//    have nothing to drive; `codexskin install` re-applies everything later.
+if (dsRoot) {
+  const r = spawnSync(node, [join(HUB_ROOT, "src", "patch.mjs"), ...process.argv.slice(2).filter((a) => a !== "--startup")], {
+    stdio: "inherit",
+    windowsHide: true,
+  });
+  if (r.status !== 0) {
+    die("patching failed - see output above; codexhost may have changed upstream");
+  }
+} else {
+  log("patching skipped (Dream Skin engine missing) - re-run `npm i -g codexskin-hub` after installing it");
 }
 
 // 5. PATH shim (pure ASCII - see GBK/PowerShell 5.1 encoding lessons).

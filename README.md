@@ -25,9 +25,18 @@ upstream anchors drift.
 
 ## Install
 
-Prerequisites: [Codex Dream Skin](https://github.com/Fei-Away/Codex-Dream-Skin)
+Prerequisites (Windows): [Codex Dream Skin](https://github.com/Fei-Away/Codex-Dream-Skin)
 installed (provides the injection engine + theme library) and
 `@codexhost/cli` installed globally via npm.
+
+From npm:
+
+```cmd
+npm install -g codexskin-hub
+codexskin doctor
+```
+
+From source:
 
 ```cmd
 git clone <this repo> && cd CodexSkinHub
@@ -38,7 +47,9 @@ node install.mjs            # add --startup to register a per-user startup entry
 config pointing at the Dream Skin engine, patches the installed codexhost
 package, and writes the `codexskin.cmd` PATH shim into
 `%USERPROFILE%\.local\bin`. Re-running it after a `git pull` upgrades in place
-(fully idempotent).
+(fully idempotent). Without the Dream Skin engine the installer degrades
+gracefully (warns, skips patching, still installs the CLI) - re-run it after
+installing the engine.
 
 ## Uninstall
 
