@@ -25,6 +25,21 @@ upstream anchors drift.
 
 ## Install
 
+From npm:
+
+```cmd
+npm install -g codexskin-hub
+codexskin setup
+```
+
+`codexskin setup` bootstraps everything a fresh machine needs: it detects
+**Codex Desktop** (Microsoft Store - auto-installs via winget, otherwise opens
+the Store page and guides you), installs **@codexhost/cli** via npm, downloads
+the latest **Codex Dream Skin** installer from GitHub Releases and runs it
+(`--yes` for silent install), then wires the integration (runtime copy +
+patches + PATH shim) and finishes with `codexskin doctor`. Use `--dry-run` to
+only report what is missing. Honour `HTTPS_PROXY` for all downloads.
+
 Prerequisites (Windows): [Codex Dream Skin](https://github.com/Fei-Away/Codex-Dream-Skin)
 installed (provides the injection engine + theme library) and
 `@codexhost/cli` installed globally via npm.

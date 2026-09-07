@@ -19,6 +19,8 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
+import readline from "node:readline";
+import { fileURLToPath } from "node:url";
 
 // CodexSkinHub owns its own state; the Dream Skin engine (injector, node
 // runtime, theme library) stays under %LOCALAPPDATA%\CodexDreamSkin and is
@@ -778,6 +780,155 @@ async function cmdDoctor() {
   for (const line of String(r.stdout ?? "").split(/\r?\n/)) if (line.trim()) console.log(`  ${line.trim()}`);
 }
 
+// ---------- setup wizard: bootstrap missing prerequisites ----------
+
+const DS_REPO_API = "https://api.github.com/repos/Fei-Away/Codex-Dream-Skin/releases/latest";
+
+function proxyArgs() {
+  const p = process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy ?? "";
+  return p ? ["-x", p] : [];
+}
+
+function curlJson(url) {
+  const r = spawnSync("curl.exe", ["-sSLf", "--max-time", "30", ...proxyArgs(), url], {
+    encoding: "utf8", windowsHide: true, shell: false,
+  });
+  if (r.status !== 0 || !r.stdout) return null;
+  try { return JSON.parse(r.stdout); } catch { return null; }
+}
+
+function downloadFile(url, dest, label) {
+  console.log(`[codexskin] downloading ${label} ...`);
+  const r = spawnSync("curl.exe", ["-L", "-f", "--retry", "2", "--max-time", "600", "-o", dest, ...proxyArgs(), url], {
+    stdio: "inherit", windowsHide: true, shell: false,
+  });
+  return r.status === 0 && fs.existsSync(dest);
+}
+
+function detectCodexDesktop() {
+  const r = spawnSync(
+    "powershell.exe",
+    ["-NoProfile", "-Command", "(Get-AppxPackage -Name 'OpenAI.Codex*').InstallLocation"],
+    { encoding: "utf8", windowsHide: true, shell: false },
+  );
+  const loc = String(r.stdout ?? "").trim().split(/\r?\n/)[0];
+  return loc && r.status === 0 ? loc : null;
+}
+
+function detectCodexhost() {
+  const appData = process.env.APPDATA ?? path.join(process.env.USERPROFILE ?? "", "AppData", "Roaming");
+  return fs.existsSync(path.join(appData, "npm", "node_modules", "@codexhost", "cli", "bin", "codexhost.js"));
+}
+
+function detectDsEngine() {
+  return fs.existsSync(path.join(DS_ROOT, "engine", "scripts", "injector.mjs"));
+}
+
+function ask(question) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) =>
+    rl.question(`[codexskin] ${question}`, (a) => { rl.close(); resolve(a.trim()); }),
+  );
+}
+
+async function cmdSetup(flags = {}) {
+  const dry = flags.has("dry-run");
+  const assumeYes = flags.has("yes");
+  console.log("[codexskin] setup - bootstrap prerequisites (Codex Desktop / codexhost / Dream Skin)");
+  if (process.platform !== "win32") die("setup only supports Windows");
+
+  // 1. Codex Desktop (Microsoft Store, MSIX OpenAI.Codex).
+  let desktop = detectCodexDesktop();
+  if (desktop) {
+    console.log(`  OK   Codex Desktop - ${desktop}`);
+  } else if (dry) {
+    console.log("  MISS Codex Desktop (would open Microsoft Store and guide installation)");
+  } else {
+    console.log("  MISS Codex Desktop - attempting winget / Microsoft Store ...");
+    const w = spawnSync("winget", ["search", "OpenAI Codex", "--source", "msstore"], {
+      encoding: "utf8", windowsHide: true, shell: true,
+    });
+    const hit = String(w.stdout ?? "").split(/\r?\n/).find((l) => /openai/i.test(l) && /codex|chatgpt/i.test(l));
+    if (hit) {
+      const id = hit.trim().split(/\s{2,}/)[0];
+      console.log(`  -> winget install ${id} (msstore)`);
+      spawnSync("winget", ["install", "--id", id, "--source", "msstore", "--accept-package-agreements", "--accept-source-agreements"], {
+        stdio: "inherit", windowsHide: true, shell: true,
+      });
+      desktop = detectCodexDesktop();
+    }
+    for (let i = 0; !desktop && i < 3; i++) {
+      spawnSync("cmd.exe", ["/c", "start", "", "ms-windows-store://search/?query=OpenAI%20Codex"], { windowsHide: true, shell: false });
+      await ask("Microsoft Store opened. Install \"Codex\" (or ChatGPT) there, launch it once, quit it, then press Enter to re-check ...");
+      desktop = detectCodexDesktop();
+    }
+    console.log(desktop ? `  OK   Codex Desktop - ${desktop}` : "  MISS Codex Desktop still missing - codexhost cannot launch without it");
+  }
+
+  // 2. @codexhost/cli (npm global).
+  if (detectCodexhost()) {
+    console.log("  OK   @codexhost/cli");
+  } else if (dry) {
+    console.log("  MISS @codexhost/cli (would run: npm install -g @codexhost/cli)");
+  } else {
+    console.log("  -> npm install -g @codexhost/cli ...");
+    spawnSync("npm", ["install", "-g", "@codexhost/cli", "--registry=https://registry.npmjs.org/"], {
+      stdio: "inherit", windowsHide: true, shell: true,
+    });
+    console.log(detectCodexhost() ? "  OK   @codexhost/cli" : "  MISS @codexhost/cli install failed - check network / proxy and re-run setup");
+  }
+
+  // 3. Codex Dream Skin engine (GitHub release installer).
+  if (detectDsEngine()) {
+    console.log(`  OK   Dream Skin engine - ${DS_ROOT}`);
+  } else if (dry) {
+    console.log("  MISS Dream Skin engine (would download the latest Setup.exe from GitHub Releases and run the installer)");
+  } else {
+    console.log("  -> fetching latest Codex Dream Skin release ...");
+    const rel = curlJson(DS_REPO_API);
+    const asset = rel?.assets?.find((a) => /^CodexDreamSkin-Setup-.*\.exe$/i.test(a.name));
+    if (!asset) {
+      console.log("  MISS could not resolve a Windows installer from GitHub Releases - open https://github.com/Fei-Away/Codex-Dream-Skin/releases manually");
+    } else {
+      const dest = path.join(process.env.TEMP ?? HUB_ROOT, asset.name);
+      console.log(`  -> ${asset.name} (${Math.round((asset.size ?? 0) / 1048576)} MB, tag ${rel.tag_name ?? "?"})`);
+      const ok = assumeYes || (await ask(`Download and run the Dream Skin installer? [Y/n] `)).match(/^n/i) === null;
+      if (!ok) {
+        console.log("  skipped Dream Skin installer");
+      } else if (downloadFile(asset.browser_download_url, dest, asset.name) && fs.existsSync(dest)) {
+        console.log("  -> launching installer (close Codex first if it is running) ...");
+        const inst = spawnSync(dest, assumeYes ? ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"] : [], {
+          stdio: assumeYes ? "ignore" : "inherit", windowsHide: false, shell: false,
+        });
+        if (assumeYes && inst.status !== 0) console.log(`  installer exited with status ${inst.status}`);
+        if (detectDsEngine()) console.log(`  OK   Dream Skin engine - ${DS_ROOT}`);
+        else console.log("  MISS engine not detected yet - finish the installer wizard, then re-run `codexskin setup`");
+      } else {
+        console.log("  MISS download failed - check network / proxy and re-run setup");
+      }
+    }
+  }
+
+  // 4. Wire the integration (runtime copy + patches + shim), then doctor.
+  if (dry) {
+    console.log("  (dry-run: integration install + doctor skipped)");
+    return;
+  }
+  const candidates = [
+    path.join(HUB_ROOT, "install.mjs"),
+    path.join(fileURLToPath(path.dirname(import.meta.url)), "..", "install.mjs"),
+  ];
+  const installer = candidates.find((p) => fs.existsSync(p));
+  if (installer) {
+    console.log(`  -> applying integration (${installer}) ...`);
+    spawnSync(process.execPath, [installer], { stdio: "inherit", windowsHide: true });
+  } else {
+    console.log("  MISS install.mjs not found - re-run `npm install -g codexskin-hub` to apply the integration");
+  }
+  console.log("");
+  await cmdDoctor();
+}
+
 // Exported for testing / tooling; importing this module has no side effects
 // (the CLI only runs when the file is invoked directly).
 export {
@@ -814,8 +965,10 @@ if (invokedDirectly) {
     else if (cmd === "import") await runImportFlow();
     else if (cmd === "import-worker") await runImportFlow();
     else if (cmd === "doctor") await cmdDoctor();
+    else if (cmd === "setup") await cmdSetup(new Set(rest.map((a) => a.replace(/^--+/, ""))));
     else if (cmd === "help" || cmd === "--help" || cmd === "-h") {
       console.log("codexskin - codexhost + Codex Dream Skin fusion CLI");
+      console.log("  codexskin setup [--yes] [--dry-run] bootstrap missing prerequisites (Codex Desktop, @codexhost/cli, Dream Skin engine) and wire the integration");
       console.log("  codexskin start [--theme <name>]   start codexhost with theme injection + supervisor");
       console.log("  codexskin supervise                standalone injector supervisor (used by codexhost hook)");
       console.log("  codexskin theme [<name>]           switch theme live / list themes");
@@ -825,6 +978,7 @@ if (invokedDirectly) {
       console.log("  codexskin status                   show endpoint / injector / theme state");
       console.log("  codexskin inject                   align injector to the running Codex once");
       console.log("  codexskin doctor                   health-check the whole integration");
+      console.log("  codexskin setup                    bootstrap prerequisites + wire the integration");
       console.log("  codexskin down                     stop supervisor, codexhost wrapper and injector");
     } else die(`unknown command: ${cmd}. Try "codexskin help".`);
   } catch (e) {

@@ -56,7 +56,7 @@ if (!dsRoot) {
   // copy and the codexskin CLI still work; doctor/status will show MISSes
   // until the engine (and codexhost) are present.
   log(`WARNING: Dream Skin engine not found at ${DS_ROOT_DEFAULT}`);
-  log("WARNING: install Codex Dream Skin first, then re-run `npm i -g codexskin-hub` (or `node install.mjs`)");
+  log("WARNING: run `codexskin setup` to bootstrap it (auto-download + guided install), or install Codex Dream Skin manually first");
 }
 const nodeExe = dsRoot ? join(dsRoot, "engine", "runtime", "node", "node.exe") : "";
 const node = existsSync(nodeExe) ? nodeExe : "node";
@@ -65,6 +65,9 @@ const node = existsSync(nodeExe) ? nodeExe : "node";
 mkdirSync(join(HUB_ROOT, "src"), { recursive: true });
 rmSync(join(HUB_ROOT, "src"), { recursive: true, force: true });
 cpSync(join(repo, "src"), join(HUB_ROOT, "src"), { recursive: true });
+for (const f of ["install.mjs", "uninstall.mjs"]) {
+  if (existsSync(join(repo, f))) cpSync(join(repo, f), join(HUB_ROOT, f));
+}
 log(`runtime copied to ${HUB_ROOT}\\src`);
 
 // 2. Config.
@@ -93,7 +96,7 @@ if (dsRoot) {
     die("patching failed - see output above; codexhost may have changed upstream");
   }
 } else {
-  log("patching skipped (Dream Skin engine missing) - re-run `npm i -g codexskin-hub` after installing it");
+  log("patching skipped (Dream Skin engine missing) - run `codexskin setup` to bootstrap and apply it");
 }
 
 // 5. PATH shim (pure ASCII - see GBK/PowerShell 5.1 encoding lessons).

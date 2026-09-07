@@ -1,6 +1,6 @@
 {
   "name": "codexskin-hub",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Standalone Dream Skin theme management for codexhost-launched Codex: theme hot-switch, ZIP import, gallery, in-app settings page - non-invasive to Codex Dream Skin and codex-host",
   "type": "module",
   "bin": {
