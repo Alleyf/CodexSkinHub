@@ -1,0 +1,21 @@
+{
+  "name": "codexskin-hub",
+  "version": "0.1.0",
+  "description": "Standalone Dream Skin theme management for codexhost-launched Codex: theme hot-switch, ZIP import, gallery, in-app settings page - non-invasive to Codex Dream Skin and codex-host",
+  "type": "module",
+  "bin": {
+    "codexskin": "src/cli.mjs"
+  },
+  "scripts": {
+    "install": "node install.mjs",
+    "uninstall": "node uninstall.mjs",
+    "doctor": "node src/cli.mjs doctor",
+    "patch": "node src/patch.mjs",
+    "status": "node src/patch.mjs status",
+    "revert": "node src/patch.mjs --revert"
+  },
+  "engines": {
+    "node": ">=20.11"
+  },
+  "license": "MIT"
+}
