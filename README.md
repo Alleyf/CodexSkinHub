@@ -92,17 +92,43 @@ node install.mjs          # 追加 --startup 注册开机自启
 
 ## 工作原理
 
-- **注入**：Dream Skin 主题通过 CDP 在运行时注入。注入器 watch 循环轮询活动主题目录指纹，重写 `active-theme` 内文件即可对所有运行中的 Codex 窗口热生效。
-- **端口发现**：codexhost 启动 Codex Desktop 时动态选择 CDP 端口，supervisor 通过 ChatGPT.exe 的监听套接字 → `/json/version` 发现真实端点，按需（重）启动注入器。
+### 启动与注入链路
+
+codexhost 启动 Codex Desktop 时动态选择 CDP 端口；bin 补丁里的 hook 随启动自愈拉起
+supervisor 守护，守护进程发现真实端点后拉起注入器；注入器 watch 循环轮询活动主题目录
+指纹，重写 `active-theme` 内文件即对所有运行中的 Codex 窗口热生效。
+
+```mermaid
+flowchart TB
+    A["codexskin start / codexskin start --background"] --> B["PATH 垫片<br/>.local/bin/codexhost.cmd · 转发前静默重打补丁"]
+    B --> C["codexhost bin (已打补丁)"]
+    C --> D["启动 Codex Desktop<br/>(动态 CDP 端口)"]
+    C --> E["hook.mjs<br/>主题分发 + superviseDetached"]
+    E --> F["supervisor 守护<br/>cli.mjs supervise"]
+    F --> G["端口发现<br/>ChatGPT.exe 监听套接字 → /json/version"]
+    G --> H["injector.mjs --watch"]
+    H -- "CDP 注入" --> I["每个运行中的 Codex 窗口"]
+    J["active-theme 目录<br/>(主题指纹变化)"] -- "watch 轮询" --> H
+    T["codexskin theme &lt;名称&gt;"] -- "重写活动主题" --> J
+```
+
+### 四层自愈
+
+`npm update -g @codexhost/cli` 会覆盖补丁，四层机制保证主题能力跨升级存活：
+
+```mermaid
+flowchart TB
+    X["npm update / install -g @codexhost/cli<br/>(覆盖 bin 与 renderer 补丁)"] --> L1["① CLI 命令入口<br/>codexskin 每次执行前静默重打补丁"]
+    L1 --> L2["② PATH 前置垫片<br/>codexhost.cmd 转发真身前重打补丁"]
+    L2 --> L3["③ 开机自启链<br/>Startup 注册项启动时自愈"]
+    L3 --> L4["④ bin 内 hook 兜底<br/>superviseDetached spawn supervisor"]
+    L4 --> OK["补丁恢复, 主题能力存活"]
+```
+
 - **补丁**：`src/patch.mjs` 锚点式幂等补丁器向已安装的 `@codexhost/cli` 的 bin 与 renderer 各插入带 `[codexskin]` 标记的代码块：
   - **bin**：主题命令分发 + `superviseDetached`（启动时自愈拉起 supervisor 守护）；
   - **renderer**：应用内 Dream Skin 设置页载荷。
   锚点漂移时拒绝写入、保持文件原样；`--revert` 可按标记剥离，与官方 0.6.0 stock 文件**字节级一致**。
-- **四层自愈**（对抗 `npm update -g @codexhost/cli` 覆盖补丁）：
-  1. `codexskin` 命令入口每次执行前静默重打补丁；
-  2. PATH 前置目录垫片在转发到真实 bin 前重打补丁；
-  3. 开机自启链（`--startup` 注册）自愈；
-  4. bin 补丁内的 hook 兜底 spawn supervisor。
 - **状态**：运行时状态位于 `%LOCALAPPDATA%\CodexSkinHub`（config、supervisor 状态、日志、导入临时目录）；Dream Skin 引擎与主题库留在 `%LOCALAPPDATA%\CodexDreamSkin` 仅被引用（可通过 `config.json -> dreamSkinRoot` 覆写）。
 
 ## 卸载
