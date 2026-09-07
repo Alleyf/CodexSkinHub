@@ -27,6 +27,7 @@ import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { homedir, tmpdir } from "node:os";
+import { findCodexhostPackage } from "./discover.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const quiet = process.argv.includes("--quiet");
@@ -38,28 +39,6 @@ function log(msg) {
 }
 
 // ---------------------------------------------------------------------------
-// Locate the global @codexhost/cli package
-// ---------------------------------------------------------------------------
-function findPackage() {
-  const override = process.env.CODEXSKIN_PKG_DIR;
-  const appData = process.env.APPDATA ?? join(homedir(), "AppData", "Roaming");
-  const candidates = [
-    override,
-    join(appData, "npm", "node_modules", "@codexhost", "cli"),
-  ].filter(Boolean);
-  for (const dir of candidates) {
-    const pkgJson = join(dir, "package.json");
-    if (!existsSync(pkgJson)) continue;
-    try {
-      const json = JSON.parse(readFileSync(pkgJson, "utf8"));
-      if (json.name === "@codexhost/cli") return { dir, version: json.version };
-    } catch {
-      /* unreadable package.json - skip */
-    }
-  }
-  return null;
-}
-
 function targetsFor(pkgDir) {
   return {
     bin: join(pkgDir, "bin", "codexhost.js"),
@@ -289,9 +268,9 @@ function revertRenderer(text) {
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
-const pkg = findPackage();
+const pkg = findCodexhostPackage([process.env.CODEXSKIN_PKG_DIR]);
 if (!pkg) {
-  log("ERROR: @codexhost/cli not found (looked in %APPDATA%\\npm\\node_modules and CODEXSKIN_PKG_DIR)");
+  log("ERROR: @codexhost/cli not found (looked in CODEXSKIN_PKG_DIR, %APPDATA%\\npm\\node_modules, the node.exe install dir and `npm prefix -g`)");
   process.exit(1);
 }
 const { bin, renderer } = targetsFor(pkg.dir);

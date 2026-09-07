@@ -173,6 +173,7 @@ npm uninstall -g codexskin-hub
 src/cli.mjs               CLI + supervisor + CDP 桥（setup/start/theme/import/gallery/status/down/doctor）
 src/hook.mjs              被补丁后的 codexhost bin 加载（主题分发 + supervisor 自愈拉起）
 src/patch.mjs             锚点式幂等补丁器：apply / status / --revert
+src/discover.mjs          定位全局 @codexhost/cli（兼容 nvm-windows / 自定义 npm prefix）
 src/payload/renderer.js   应用内 Dream Skin 设置页载荷
 src/tools/ui-verify.mjs   CDP 截图驱动（UI 验证）
 install.mjs / uninstall.mjs

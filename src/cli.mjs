@@ -21,6 +21,7 @@ import http from "node:http";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
+import { findCodexhostPackage } from "./discover.mjs";
 
 // CodexSkinHub owns its own state; the Dream Skin engine (injector, node
 // runtime, theme library) stays under %LOCALAPPDATA%\CodexDreamSkin and is
@@ -892,8 +893,6 @@ async function cmdDoctor() {
   const supAlive = supPid ? await processAlive(supPid) : false;
   check("supervisor", supAlive, supPid ? `pid ${supPid}` : "not running");
   // Patch status of the installed codexhost package.
-  const appData = process.env.APPDATA ?? path.join(process.env.USERPROFILE ?? "", "AppData", "Roaming");
-  const pkgDir = path.join(appData, "npm", "node_modules", "@codexhost", "cli");
   const patcher = path.join(import.meta.dirname, "patch.mjs");
   const node = fs.existsSync(NODE_EXE) ? NODE_EXE : process.execPath;
   const r = spawnSync(node, [patcher, "status"], { encoding: "utf8", windowsHide: true });
@@ -936,8 +935,7 @@ function detectCodexDesktop() {
 }
 
 function detectCodexhost() {
-  const appData = process.env.APPDATA ?? path.join(process.env.USERPROFILE ?? "", "AppData", "Roaming");
-  return fs.existsSync(path.join(appData, "npm", "node_modules", "@codexhost", "cli", "bin", "codexhost.js"));
+  return findCodexhostPackage() !== null;
 }
 
 function detectDsEngine() {
@@ -1066,8 +1064,16 @@ export {
 
 // CLI dispatch - only when executed directly (importable as a library otherwise).
 import { pathToFileURL } from "node:url";
+// Resolve BOTH sides through the filesystem before comparing: on nvm-windows
+// process.argv[1] reaches the entry through a symlinked prefix dir (e.g.
+// D:\nvm4w\nodejs\...) while import.meta.url is the realpath (Node resolves
+// the entry module), so a plain URL compare fails and the CLI silently did
+// nothing with exit code 0 (issue #1).
 const invokedDirectly = process.argv[1] && (() => {
-  try { return pathToFileURL(process.argv[1]).href === import.meta.url; } catch { return false; }
+  try {
+    return fs.realpathSync(path.resolve(process.argv[1]))
+        === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch { return false; }
 })();
 if (invokedDirectly) {
   const [cmd = "start", ...rest] = process.argv.slice(2);
