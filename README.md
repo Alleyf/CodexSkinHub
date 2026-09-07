@@ -1,7 +1,7 @@
 # CodexSkinHub
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Alleyf/CodexSkinHub/main/docs/images/banner.svg" alt="CodexSkinHub - codexhost 主题管理中心" width="720">
+  <img src="https://raw.githubusercontent.com/Alleyf/CodexSkinHub/main/docs/images/logo.svg" alt="CodexSkinHub logo" width="160">
 </p>
 
 <p align="center">
