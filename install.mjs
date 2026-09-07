@@ -20,7 +20,7 @@
 import {
   cpSync, existsSync, mkdirSync, readFileSync, writeFileSync, rmSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
@@ -62,13 +62,25 @@ const nodeExe = dsRoot ? join(dsRoot, "engine", "runtime", "node", "node.exe") :
 const node = existsSync(nodeExe) ? nodeExe : "node";
 
 // 1. Runtime copy.
-mkdirSync(join(HUB_ROOT, "src"), { recursive: true });
-rmSync(join(HUB_ROOT, "src"), { recursive: true, force: true });
-cpSync(join(repo, "src"), join(HUB_ROOT, "src"), { recursive: true });
-for (const f of ["install.mjs", "uninstall.mjs"]) {
-  if (existsSync(join(repo, f))) cpSync(join(repo, f), join(HUB_ROOT, f));
+//    Guard: when invoked from the runtime home itself (codexskin setup ->
+//    %LOCALAPPDATA%\CodexSkinHub\install.mjs) the source and the destination
+//    are the same directory - deleting src first would leave nothing to copy.
+//    The runtime is already in place there, so skip the copy entirely.
+const isRuntimeSelfInstall = resolve(repo) === resolve(HUB_ROOT);
+if (isRuntimeSelfInstall) {
+  log("running from the runtime home - src already in place, skipping copy");
+} else {
+  if (!existsSync(join(repo, "src"))) {
+    die(`source tree missing at ${join(repo, "src")} - reinstall the package`);
+  }
+  mkdirSync(join(HUB_ROOT, "src"), { recursive: true });
+  rmSync(join(HUB_ROOT, "src"), { recursive: true, force: true });
+  cpSync(join(repo, "src"), join(HUB_ROOT, "src"), { recursive: true });
+  for (const f of ["install.mjs", "uninstall.mjs"]) {
+    if (existsSync(join(repo, f))) cpSync(join(repo, f), join(HUB_ROOT, f));
+  }
+  log(`runtime copied to ${HUB_ROOT}\\src`);
 }
-log(`runtime copied to ${HUB_ROOT}\\src`);
 
 // 2. Config.
 writeFileSync(
