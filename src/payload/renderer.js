@@ -401,7 +401,10 @@
           setExportButton("Exporting...", true);
           try {
             const r = await window.__codexskin.request("export-logs");
-            if (!disposed) setNotice(`Logs exported: ${r?.path ?? "(unknown location)"}`, "ok");
+            if (!disposed) {
+              if (r?.opened) setNotice(`Logs exported: ${r.path}`, "ok");
+              else setNotice(`Logs exported to ${r?.path ?? "(unknown location)"} - auto-open failed${r?.error ? ` (${r.error})` : ""}; open the folder manually.`, "info");
+            }
           } catch (e) {
             if (!disposed) setNotice(`Log export failed: ${errText(e)}`, "error");
           } finally {

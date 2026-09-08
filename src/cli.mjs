@@ -469,9 +469,14 @@ async function exportLogsBundle() {
     }
   } catch { /* pruning is best-effort */ }
 
-  plat.openPath(logsDir);
-  console.log(`[codexskin] logs exported: ${dest}`);
-  return { path: dest, dir: logsDir };
+  const reveal = plat.revealPath(dest);
+  if (reveal.opened) {
+    console.log(`[codexskin] logs exported: ${dest} (folder opened)`);
+  } else {
+    console.log(`[codexskin] logs exported: ${dest}`);
+    console.log(`[codexskin] could not auto-open the folder: ${reveal.error}`);
+  }
+  return { path: dest, dir: logsDir, opened: reveal.opened, error: reveal.error };
 }
 
 // Native file picker: PowerShell WinForms (Windows), osascript (macOS),
@@ -798,6 +803,14 @@ function startBridgeLoop({ log = () => {}, intervalMs = 1500 } = {}) {
   let busy = false;
   return setInterval(async () => {
     if (busy) return;
+    // Ownership check: a foreground `codexskin start` runs this loop in its
+    // own process while the dedicated supervisor (hook-spawned) also pumps.
+    // Two pollers splice the same page queue, so requests get answered by
+    // whichever wins the race - with stale code if the `start` process was
+    // launched before an update. Defer to the registered live owner.
+    const owner = readJsonSafe(SKIN_STATE) ?? {};
+    const ownerPid = Number(owner.supervisePid) || 0;
+    if (ownerPid && ownerPid !== process.pid && (await processAlive(ownerPid))) return;
     busy = true;
     try {
       const endpoint = await discoverCdp();
@@ -821,8 +834,10 @@ async function cmdSupervise() {
   writeJsonNoBom(SKIN_STATE, skinNow);
   const logStream = fs.createWriteStream(path.join(HUB_ROOT, "codexskin-supervise.log"), { flags: "a" });
   const origLog = console.log;
+  // Timestamp every log line - without these, a diagnostics bundle cannot
+  // tell "the injector crash-looped at 10:14" from "this happened last week".
   console.log = (...a) => {
-    logStream.write(a.join(" ") + "\n");
+    logStream.write(`[${new Date().toISOString()}] ${a.join(" ")}\n`);
     origLog(...a);
   };
   console.log(`[codexskin] supervisor started (pid ${process.pid}).`);

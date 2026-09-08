@@ -166,6 +166,32 @@ export function openUrl(url) {
   spawnSync(opener, [url], { detached: true, stdio: "ignore" });
 }
 
+// Open the folder containing `p` and select the file itself. Unlike openPath,
+// this REPORTS failure instead of swallowing it: spawnSync never throws, it
+// puts the failure in the result - and a supervisor spawned from inside the
+// MSIX Codex app may be unable to pop an Explorer window (Explorer is a
+// single-instance COM hand-off, unlike e.g. a PowerShell dialog). Callers use
+// the returned flags to tell the user "opened" vs "open it manually at <path>".
+export function revealPath(p) {
+  const fail = (error) => ({ opened: false, error: error || "unknown error" });
+  if (IS_WIN) {
+    // Preferred: /select,<file> opens the folder with the file highlighted.
+    const sel = spawnSync("explorer.exe", [`/select,${p}`], { detached: true, stdio: "ignore", windowsHide: true });
+    if (!sel.error) return { opened: true, error: "" };
+    // Fallback: ShellExecute the folder (start) - different launch chain.
+    const dir = path.dirname(p);
+    const st = spawnSync("cmd.exe", ["/d", "/s", "/c", "start", "", dir], { detached: true, stdio: "ignore", windowsHide: true, shell: false });
+    if (!st.error) return { opened: true, error: "" };
+    return fail(`${sel.error.code ?? sel.error.message} / ${st.error.code ?? st.error.message}`);
+  }
+  if (IS_MAC) {
+    const r = spawnSync("open", ["-R", p], { detached: true, stdio: "ignore" });
+    return r.error ? fail(`${r.error.code ?? r.error.message}`) : { opened: true, error: "" };
+  }
+  const r = spawnSync("xdg-open", [path.dirname(p)], { detached: true, stdio: "ignore" });
+  return r.error ? fail(`${r.error.code ?? r.error.message}`) : { opened: true, error: "" };
+}
+
 // ---------------------------------------------------------------------------
 // Native ZIP picker (returns "" when no dialog tool is available)
 // ---------------------------------------------------------------------------
