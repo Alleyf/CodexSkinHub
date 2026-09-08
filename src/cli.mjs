@@ -418,9 +418,13 @@ function startSupervisorLoop({ log = () => {}, intervalMs = 4000 } = {}) {
 
 async function openThemesDir() {
   await fsp.mkdir(THEMES_DIR, { recursive: true });
-  plat.openPath(THEMES_DIR);
-  console.log(`[codexskin] opened theme folder: ${THEMES_DIR}`);
-  return { opened: THEMES_DIR };
+  const r = plat.openFolder(THEMES_DIR);
+  if (r.opened) {
+    console.log(`[codexskin] opened theme folder: ${THEMES_DIR}`);
+  } else {
+    console.log(`[codexskin] could not open theme folder ${THEMES_DIR}: ${r.error}`);
+  }
+  return { opened: r.opened, path: THEMES_DIR, error: r.error };
 }
 
 function openGallery(url) {

@@ -308,7 +308,10 @@
         };
 
         btnDir.addEventListener("click", async () => {
-          try { await window.__codexskin.request("open-dir"); }
+          try {
+            const r = await window.__codexskin.request("open-dir");
+            if (r && r.opened === false) setNotice(`Could not open the theme folder: ${r.error ?? "unknown error"}`, "error");
+          }
           catch (e) { setNotice(`Could not open the theme folder: ${errText(e)}`, "error"); }
         });
         btnImport.addEventListener("click", async () => {

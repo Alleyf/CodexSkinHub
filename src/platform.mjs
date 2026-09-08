@@ -149,12 +149,34 @@ export async function killTree(pid, execFileText) {
 
 export function openPath(p) {
   if (IS_WIN) {
-    const child = spawnSync("explorer.exe", [p], { detached: true, stdio: "ignore", windowsHide: true });
+    // NOTE: never set windowsHide on a GUI spawn - node maps it to
+    // STARTUPINFO.wShowWindow = SW_HIDE and Explorer honors it, opening the
+    // folder window INVISIBLE (no error, no window). That is exactly what
+    // made "Open folder" / export-logs auto-open silently do nothing.
+    const child = spawnSync("explorer.exe", [p], { detached: true, stdio: "ignore" });
     return child.status ?? 0;
   }
   const opener = IS_MAC ? "open" : "xdg-open";
   const r = spawnSync(opener, [p], { detached: true, stdio: "ignore" });
   return r.status ?? 0;
+}
+
+// Open a folder and REPORT failure instead of swallowing it. Same GUI-spawn
+// rule as openPath: no windowsHide on Windows.
+export function openFolder(p) {
+  const fail = (error) => ({ opened: false, error: error || "unknown error" });
+  if (IS_WIN) {
+    const ex = spawnSync("explorer.exe", [p], { detached: true, stdio: "ignore" });
+    if (!ex.error) return { opened: true, error: "" };
+    const st = spawnSync("cmd.exe", ["/d", "/s", "/c", "start", "", p], { detached: true, stdio: "ignore", windowsHide: true, shell: false });
+    return st.error ? fail(`${ex.error.code ?? ex.error.message} / ${st.error.code ?? st.error.message}`) : { opened: true, error: "" };
+  }
+  if (IS_MAC) {
+    const r = spawnSync("open", [p], { detached: true, stdio: "ignore" });
+    return r.error ? fail(String(r.error.code ?? r.error.message)) : { opened: true, error: "" };
+  }
+  const r = spawnSync("xdg-open", [p], { detached: true, stdio: "ignore" });
+  return r.error ? fail(String(r.error.code ?? r.error.message)) : { opened: true, error: "" };
 }
 
 export function openUrl(url) {
@@ -176,7 +198,8 @@ export function revealPath(p) {
   const fail = (error) => ({ opened: false, error: error || "unknown error" });
   if (IS_WIN) {
     // Preferred: /select,<file> opens the folder with the file highlighted.
-    const sel = spawnSync("explorer.exe", [`/select,${p}`], { detached: true, stdio: "ignore", windowsHide: true });
+    // No windowsHide - see the note in openPath (SW_HIDE hides the window).
+    const sel = spawnSync("explorer.exe", [`/select,${p}`], { detached: true, stdio: "ignore" });
     if (!sel.error) return { opened: true, error: "" };
     // Fallback: ShellExecute the folder (start) - different launch chain.
     const dir = path.dirname(p);
