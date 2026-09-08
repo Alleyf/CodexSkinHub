@@ -27,6 +27,7 @@
     };
   }
   const CODEXSKIN_GALLERY_URL = "https://dreamskin.cc/gallery";
+  const CODEXSKIN_UPDATE_CMD = "npm i -g codexskin-hub@latest";
   function codexskinEl(document2, tag, className, text) {
     const element = document2.createElement(tag);
     if (className) element.className = className;
@@ -41,7 +42,8 @@
       check: '<path d="M2.8 8.6l3.4 3.4 7-8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
       palette: '<path d="M8 1.8a6.2 6.2 0 1 0 0 12.4c1 0 1.6-.7 1.6-1.5 0-1.5 1.2-1.7 2.4-1.7 1.4 0 2.2-1 2.2-2.4A6.2 6.2 0 0 0 8 1.8z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="5.1" cy="6.3" r="1" fill="currentColor"/><circle cx="8" cy="4.7" r="1" fill="currentColor"/><circle cx="10.9" cy="6.3" r="1" fill="currentColor"/>',
       spark: '<path d="M8 1.8l1.5 4.7L14.2 8l-4.7 1.5L8 14.2 6.5 9.5 1.8 8l4.7-1.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
-      refresh: '<path d="M13.4 8a5.4 5.4 0 1 1-1.7-3.9M13.5 1.9v2.9h-2.9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>'
+      refresh: '<path d="M13.4 8a5.4 5.4 0 1 1-1.7-3.9M13.5 1.9v2.9h-2.9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
+      copy: '<rect x="5.4" y="5.4" width="8.2" height="8.2" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.6 5.4V3.9a1.5 1.5 0 0 0-1.5-1.5H3.9a1.5 1.5 0 0 0-1.5 1.5v5.2a1.5 1.5 0 0 0 1.5 1.5h1.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>'
     };
     const svg = document2.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", "0 0 16 16");
@@ -86,6 +88,12 @@
 .ds-notice.ok { color: rgb(74 222 128); }
 .ds-notice.error { color: #fca5a5; }
 .ds-notice.info { color: var(--settings-text); }
+.ds-cmd { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; margin-top: 9px; padding: 4px 4px 4px 10px; border: 1px solid var(--settings-border); border-radius: 8px; background: var(--settings-hover); }
+.ds-cmd-text { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--settings-text); white-space: nowrap; overflow-x: auto; }
+.ds-copy { display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--settings-border); background: transparent; color: var(--settings-muted); font: inherit; font-size: 11.5px; cursor: pointer; transition: color .14s ease, border-color .14s ease, background .14s ease; }
+.ds-copy:hover { color: var(--settings-text); border-color: var(--settings-focus); background: var(--settings-active); }
+.ds-copy:focus-visible { outline: 2px solid var(--settings-focus); outline-offset: 2px; }
+.ds-copy.done { color: rgb(74 222 128); border-color: rgb(74 222 128 / 40%); }
 .ds-spin { flex: none; width: 12px; height: 12px; border: 2px solid var(--settings-border); border-top-color: var(--settings-focus); border-radius: 50%; animation: ds-rotate .8s linear infinite; }
 @keyframes ds-rotate { to { transform: rotate(360deg); } }
 `;
@@ -139,8 +147,16 @@
         const updTitle = codexskinEl(document2, "div", "ds-gallery-title");
         updTitle.append(codexskinSvg(document2, "refresh"), document2.createTextNode("Updates"));
         const updDesc = codexskinEl(document2, "div", "ds-gallery-desc", "Checking for updates...");
+        const cmdText = codexskinEl(document2, "code", "ds-cmd-text", CODEXSKIN_UPDATE_CMD);
+        const copyLabel = codexskinEl(document2, "span", null, "Copy");
+        const btnCopy = codexskinEl(document2, "button", "ds-copy");
+        btnCopy.type = "button";
+        btnCopy.append(codexskinSvg(document2, "copy"), copyLabel);
+        const updCmd = codexskinEl(document2, "div", "ds-cmd");
+        updCmd.append(cmdText, btnCopy);
+        updCmd.hidden = true;
         const updLeft = codexskinEl(document2, "div");
-        updLeft.append(updTitle, updDesc);
+        updLeft.append(updTitle, updDesc, updCmd);
         const btnUpdate = codexskinEl(document2, "button", "ds-btn primary");
         btnUpdate.type = "button";
         btnUpdate.append(codexskinSvg(document2, "refresh"), document2.createTextNode("Check now"));
@@ -283,6 +299,7 @@
           return 0;
         };
         const renderUpdate = (r) => {
+          updCmd.hidden = true;
           if (!r || typeof r !== "object") { updDesc.textContent = "Update check unavailable."; return; }
           const cur = r.current ?? "?";
           const lat = r.latest;
@@ -291,13 +308,55 @@
             return;
           }
           if (cmpSemver(lat, cur) > 0) {
-            updDesc.textContent = `New version ${lat} available (installed: v${cur}). Update with: npm i -g codexskin-hub@latest`;
+            updDesc.textContent = `New version ${lat} available (installed: v${cur}). Run this to update:`;
+            updCmd.hidden = false;
           } else if (cmpSemver(lat, cur) < 0) {
             updDesc.textContent = `Up to date (v${cur}; published: v${lat} - this is a newer local build).`;
           } else {
             updDesc.textContent = `You are up to date (v${cur}).`;
           }
         };
+        // Clipboard: app:// is not a secure context, so the async Clipboard API
+        // is usually missing - fall back to a hidden textarea + execCommand.
+        const copyText = async (text) => {
+          try {
+            if (navigator.clipboard?.writeText) {
+              await navigator.clipboard.writeText(text);
+              return true;
+            }
+          } catch { /* fall through to the legacy path */ }
+          try {
+            const ta = codexskinEl(document2, "textarea");
+            ta.value = text;
+            ta.readOnly = true;
+            ta.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+            context.content.append(ta);
+            ta.select();
+            const ok = document2.execCommand("copy");
+            ta.remove();
+            return ok;
+          } catch { return false; }
+        };
+        let copyResetTimer = 0;
+        btnCopy.addEventListener("click", async () => {
+          const ok = await copyText(CODEXSKIN_UPDATE_CMD);
+          copyLabel.textContent = ok ? "Copied" : "Select + Ctrl+C";
+          btnCopy.classList.toggle("done", ok);
+          window.clearTimeout(copyResetTimer);
+          copyResetTimer = window.setTimeout(() => {
+            copyLabel.textContent = "Copy";
+            btnCopy.classList.remove("done");
+          }, 1800);
+          if (ok) return;
+          const selection = (document2.defaultView ?? window).getSelection?.();
+          if (selection) {
+            const range = document2.createRange();
+            range.selectNodeContents(cmdText);
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }
+        });
+
         const checkUpdate = async (force) => {
           if (checkingUpdate) return;
           checkingUpdate = true;
