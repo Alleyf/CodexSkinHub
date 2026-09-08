@@ -90,10 +90,30 @@ function execFileText(cmd, args) {
   });
 }
 
-// Launch the codexhost CLI. On Windows `codexhost` resolves to a .cmd shim,
-// which Node refuses to exec without a shell, hence cmd.exe. On unix the npm
-// global bin script (node shebang) spawns directly via PATH.
+// Launch the codexhost CLI. Resolve the launcher from the DISCOVERED
+// @codexhost/cli package - never let PATH pick the shim: a stale codexhost
+// copy in another Node prefix (e.g. a managed-node workspace install that
+// leaked into PATH) can win the PATH race and launch Codex Desktop WITHOUT
+// --renderer, which silently disables the settings-page extension and the
+// theme bridge.
+function codexhostLauncher() {
+  const pkg = findCodexhostPackage();
+  if (!pkg) return null;
+  const prefix = path.resolve(pkg.dir, "..", "..", "..");
+  if (plat.isWindows()) {
+    const cmd = path.join(prefix, "codexhost.cmd");
+    if (fs.existsSync(cmd)) return { cmd: "cmd.exe", args: ["/d", "/s", "/c", cmd] };
+  } else {
+    const bin = path.join(prefix, "bin", "codexhost");
+    if (fs.existsSync(bin)) return { cmd: bin, args: [] };
+  }
+  return null;
+}
+
 function spawnCodexhost(options) {
+  const launcher = codexhostLauncher();
+  if (launcher) return spawn(launcher.cmd, launcher.args, options);
+  // Fallback: PATH shim (Windows needs cmd.exe for .cmd shims).
   if (plat.isWindows()) {
     return spawn("cmd.exe", ["/d", "/s", "/c", "codexhost"], options);
   }
@@ -110,6 +130,63 @@ function readJsonSafe(file) {  try {
 
 function writeJsonNoBom(file, value) {
   fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\n", "utf8");
+}
+
+// Own package version. Preferred source is the package.json copied next to
+// the runtime src/; running straight from a repo checkout also works.
+const PKG_VERSION = (() => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  for (const p of [path.join(here, "..", "package.json"), path.join(HUB_ROOT, "package.json")]) {
+    try {
+      const v = JSON.parse(fs.readFileSync(p, "utf8")).version;
+      if (v) return String(v);
+    } catch { /* probe next */ }
+  }
+  return "unknown";
+})();
+
+// Update check against the npm registry. `npm view` (not raw fetch) so the
+// user's npm proxy config is honored; result is cached in codexskin.json for
+// 24h so the auto check on page open stays offline-friendly. A forced check
+// (manual button) always hits the network.
+const UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1000;
+function npmLatestVersion() {
+  return new Promise((resolve) => {
+    const isWin = process.platform === "win32";
+    const args = ["view", "codexskin-hub", "version", "--registry=https://registry.npmjs.org/"];
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+    let out = "";
+    try {
+      const child = spawn(isWin ? "npm.cmd" : "npm", args, {
+        windowsHide: true, shell: isWin, timeout: 15000,
+      });
+      child.stdout?.on("data", (d) => { out += d; });
+      child.on("error", () => done(null));
+      child.on("close", (code) => {
+        const v = String(out).trim().split(/\r?\n/).map((s) => s.trim()).filter(Boolean).pop() ?? "";
+        done(code === 0 && /^\d+\.\d+\.\d+/.test(v) ? v : null);
+      });
+    } catch { done(null); }
+  });
+}
+
+async function checkForUpdate(force) {
+  const state = readJsonSafe(SKIN_STATE) ?? {};
+  const prev = (state.updateCheck && typeof state.updateCheck === "object") ? state.updateCheck : null;
+  if (!force && prev?.at && prev?.latest && Date.now() - prev.at < UPDATE_CHECK_TTL_MS) {
+    return { ...prev, cached: true };
+  }
+  const latest = await npmLatestVersion();
+  const result = {
+    at: Date.now(),
+    current: PKG_VERSION,
+    latest: latest ?? prev?.latest ?? null,
+    error: latest ? null : "npm registry unreachable",
+  };
+  state.updateCheck = result;
+  try { writeJsonNoBom(SKIN_STATE, state); } catch { /* cache is best-effort */ }
+  return result;
 }
 
 async function getChatPids() {
@@ -582,6 +659,7 @@ async function handleBridgeCommand(action, payload) {
   if (action === "open-dir") return openThemesDir();
   if (action === "open-gallery") return openGallery(payload?.url);
   if (action === "import") return startImportWorker();
+  if (action === "check-update") return checkForUpdate(Boolean(payload?.force));
   throw new Error(`unknown bridge action: ${action}`);
 }
 

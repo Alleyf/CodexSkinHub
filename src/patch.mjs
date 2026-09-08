@@ -325,9 +325,22 @@ for (const [name, file, patchFn, revertFn] of [
     continue;
   }
   if (original.includes("[codexskin]")) {
-    // The bin patch only embeds paths; the hook logic is loaded from the
-    // runtime home at run time, so hook updates propagate without re-patching.
-    log(`${name}: already patched (codexhost v${pkg.version})`);
+    // The renderer patch INLINES the settings-page payload, so a stale file
+    // must be refreshed when the payload changed (the bin patch only embeds
+    // paths and never drifts). Re-derive via revert -> patch; write only when
+    // the content actually differs.
+    try {
+      const stock = revertFn(original).text;
+      const desired = patchFn(stock).text;
+      if (desired === original) {
+        log(`${name}: already patched (codexhost v${pkg.version})`);
+      } else {
+        writeChecked(file, desired);
+        log(`${name}: REFRESHED (patched content updated, codexhost v${pkg.version})`);
+      }
+    } catch (err) {
+      log(`${name}: already patched (codexhost v${pkg.version}); refresh skipped - ${err.message}`);
+    }
     continue;
   }
   if (statusOnly) {

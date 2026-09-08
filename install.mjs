@@ -79,7 +79,7 @@ if (isRuntimeSelfInstall) {
   mkdirSync(join(HUB_ROOT, "src"), { recursive: true });
   rmSync(join(HUB_ROOT, "src"), { recursive: true, force: true });
   cpSync(join(repo, "src"), join(HUB_ROOT, "src"), { recursive: true });
-  for (const f of ["install.mjs", "uninstall.mjs"]) {
+  for (const f of ["install.mjs", "uninstall.mjs", "package.json"]) {
     if (existsSync(join(repo, f))) cpSync(join(repo, f), join(HUB_ROOT, f));
   }
   log(`runtime copied to ${join(HUB_ROOT, "src")}`);

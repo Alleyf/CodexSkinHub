@@ -40,7 +40,8 @@
       external: '<path d="M6.8 2.6H2.6v10.8h10.8V9.2M9.4 2h4.6v4.6M13.6 2.4 7.6 8.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
       check: '<path d="M2.8 8.6l3.4 3.4 7-8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
       palette: '<path d="M8 1.8a6.2 6.2 0 1 0 0 12.4c1 0 1.6-.7 1.6-1.5 0-1.5 1.2-1.7 2.4-1.7 1.4 0 2.2-1 2.2-2.4A6.2 6.2 0 0 0 8 1.8z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="5.1" cy="6.3" r="1" fill="currentColor"/><circle cx="8" cy="4.7" r="1" fill="currentColor"/><circle cx="10.9" cy="6.3" r="1" fill="currentColor"/>',
-      spark: '<path d="M8 1.8l1.5 4.7L14.2 8l-4.7 1.5L8 14.2 6.5 9.5 1.8 8l4.7-1.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>'
+      spark: '<path d="M8 1.8l1.5 4.7L14.2 8l-4.7 1.5L8 14.2 6.5 9.5 1.8 8l4.7-1.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
+      refresh: '<path d="M13.4 8a5.4 5.4 0 1 1-1.7-3.9M13.5 1.9v2.9h-2.9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>'
     };
     const svg = document2.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", "0 0 16 16");
@@ -91,7 +92,7 @@
   function dreamSkinPage() {
     return Object.freeze({
       id: "dreamskin",
-      label: "Dream Skin",
+      label: "\u4e3b\u9898",
       icon: "star",
       mount(context) {
         const document2 = context.content.ownerDocument;
@@ -135,10 +136,21 @@
         const gallery = codexskinEl(document2, "div", "ds-gallery");
         gallery.append(galleryLeft, btnGallery);
 
+        const updTitle = codexskinEl(document2, "div", "ds-gallery-title");
+        updTitle.append(codexskinSvg(document2, "refresh"), document2.createTextNode("Updates"));
+        const updDesc = codexskinEl(document2, "div", "ds-gallery-desc", "Checking for updates...");
+        const updLeft = codexskinEl(document2, "div");
+        updLeft.append(updTitle, updDesc);
+        const btnUpdate = codexskinEl(document2, "button", "ds-btn primary");
+        btnUpdate.type = "button";
+        btnUpdate.append(codexskinSvg(document2, "refresh"), document2.createTextNode("Check now"));
+        const updateCard = codexskinEl(document2, "div", "ds-gallery");
+        updateCard.append(updLeft, btnUpdate);
+
         const notice = codexskinEl(document2, "div", "ds-notice");
         notice.hidden = true;
 
-        wrap.append(chips, labelThemes, grid, toolbar, gallery, notice);
+        wrap.append(chips, labelThemes, grid, toolbar, gallery, updateCard, notice);
         context.content.append(style, wrap);
 
         let disposed = false;
@@ -258,8 +270,55 @@
           catch (e) { setNotice(`Could not open the gallery: ${errText(e)}`, "error"); }
         });
 
+        // Update check: auto (throttled to once per 24h on the CLI side) on
+        // page open, plus a manual "Check now" that always hits the network.
+        let checkingUpdate = false;
+        const cmpSemver = (a, b) => {
+          const pa = String(a ?? "").split(".").map((n) => parseInt(n, 10) || 0);
+          const pb = String(b ?? "").split(".").map((n) => parseInt(n, 10) || 0);
+          for (let i = 0; i < 3; i += 1) {
+            const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+            if (d !== 0) return d;
+          }
+          return 0;
+        };
+        const renderUpdate = (r) => {
+          if (!r || typeof r !== "object") { updDesc.textContent = "Update check unavailable."; return; }
+          const cur = r.current ?? "?";
+          const lat = r.latest;
+          if (!lat) {
+            updDesc.textContent = `Installed: v${cur} - could not reach the npm registry${r.error ? ` (${r.error})` : ""}.`;
+            return;
+          }
+          if (cmpSemver(lat, cur) > 0) {
+            updDesc.textContent = `New version ${lat} available (installed: v${cur}). Update with: npm i -g codexskin-hub@latest`;
+          } else if (cmpSemver(lat, cur) < 0) {
+            updDesc.textContent = `Up to date (v${cur}; published: v${lat} - this is a newer local build).`;
+          } else {
+            updDesc.textContent = `You are up to date (v${cur}).`;
+          }
+        };
+        const checkUpdate = async (force) => {
+          if (checkingUpdate) return;
+          checkingUpdate = true;
+          btnUpdate.disabled = true;
+          btnUpdate.style.opacity = ".6";
+          updDesc.textContent = "Checking for updates...";
+          try {
+            renderUpdate(await window.__codexskin.request("check-update", { force: Boolean(force) }));
+          } catch (e) {
+            updDesc.textContent = `Update check failed: ${errText(e)}`;
+          } finally {
+            checkingUpdate = false;
+            btnUpdate.disabled = false;
+            btnUpdate.style.opacity = "";
+          }
+        };
+        btnUpdate.addEventListener("click", () => void checkUpdate(true));
+
         void loadList();
         void loadState();
+        void checkUpdate(false);
         pollTimer = setInterval(() => { void loadState(); }, 4000);
         return () => { disposed = true; clearInterval(pollTimer); };
       }
