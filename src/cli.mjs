@@ -517,12 +517,36 @@ async function exportLogsBundle() {
   return { path: dest, dir: logsDir, opened: reveal.opened, error: reveal.error };
 }
 
-// One-click restart from the theme page: kill the codexhost / Codex Desktop
-// tree and relaunch codexhost detached. The supervisor keeps running the whole
-// time - its loop discovers the new CDP endpoint and re-aligns the injector
-// within seconds, so no manual `codexskin start` is needed afterwards.
-// NOTE: the page that requested this dies with Desktop, so the bridge deliver
-// will never arrive - the renderer shows its own notice BEFORE calling.
+// Append a line to the supervise log from ANY process. The restart helper is
+// spawned detached with stdio ignored - without this its fate would be
+// invisible in every diagnostics bundle (exactly what happened in v0.3.8:
+// the restart killed Desktop and then itself died silently).
+async function logFile(line) {
+  try {
+    await fsp.appendFile(path.join(HUB_ROOT, "codexskin-supervise.log"), `[${new Date().toISOString()}] ${line}\n`);
+  } catch { /* best effort */ }
+}
+
+async function waitCodexUp(seconds) {
+  for (let i = 0; i < seconds; i += 1) {
+    await new Promise((r) => setTimeout(r, 1000));
+    try {
+      if ((await plat.findDesktopPids(execFileText)).length) return true;
+    } catch { /* keep waiting */ }
+  }
+  return false;
+}
+
+// Restart worker: kill the codexhost / Codex Desktop tree and relaunch
+// codexhost detached. The supervisor keeps running the whole time - its loop
+// discovers the new CDP endpoint and re-aligns the injector within seconds.
+// Runs either as the `codexskin restart` CLI command (foreground, logs to
+// the terminal) or as a detached helper spawned by the bridge action (the
+// serving process must NOT do this inline: killing codexhost trips the
+// foreground `start` exit handler, which process.exit()s itself mid-restart
+// before ever reaching the relaunch - the v0.3.8 "closed but never reopened"
+// bug). Polls for the Desktop process and retries once, because a MSIX app
+// killed moments ago can refuse immediate re-activation (AppX error).
 async function restartCodexStack() {
   const skin = readJsonSafe(SKIN_STATE) ?? {};
   const killed = [];
@@ -533,7 +557,7 @@ async function restartCodexStack() {
       await plat.killTree(hostPid, execFileText).catch(() => {});
       killed.push(hostPid);
     } else {
-      console.log(`[codexskin] restart: state codexHostPid ${hostPid} is now "${img}" (pid reused) - not killing it.`);
+      await logFile(`[codexskin] restart: state codexHostPid ${hostPid} is now "${img}" (pid reused) - not killing it.`);
     }
   }
   // Desktop may have been started outside codexhost (or re-parented out of
@@ -543,16 +567,41 @@ async function restartCodexStack() {
     await plat.killTree(p, execFileText).catch(() => {});
     killed.push(p);
   }
-  await new Promise((r) => setTimeout(r, 1500));
-  const app = spawnCodexhost({ detached: true, stdio: "ignore", windowsHide: true });
+  await logFile(`[codexskin] restart: killed ${killed.length ? `pids ${killed.join(", ")}` : "nothing (not running)"}; relaunching codexhost...`);
+  await new Promise((r) => setTimeout(r, 2000));
+  let app = spawnCodexhost({ detached: true, stdio: "ignore", windowsHide: true });
   app.unref();
+  let up = await waitCodexUp(20);
+  if (!up) {
+    await logFile("[codexskin] restart: Codex did not come up within 20s - retrying launch once...");
+    app = spawnCodexhost({ detached: true, stdio: "ignore", windowsHide: true });
+    app.unref();
+    up = await waitCodexUp(15);
+  }
   writeJsonNoBom(SKIN_STATE, {
     ...(readJsonSafe(SKIN_STATE) ?? {}),
     codexHostPid: app.pid,
     restartedAt: new Date().toISOString(),
   });
-  console.log(`[codexskin] restart: killed ${killed.length ? `pids ${killed.join(", ")}` : "nothing (not running)"}; relaunched codexhost (pid ${app.pid}).`);
-  return { killed, newPid: app.pid };
+  await logFile(up
+    ? `[codexskin] restart: Codex is back up (codexhost pid ${app.pid}).`
+    : `[codexskin] restart: Codex still not up after retry - run 'codexskin start' manually and check the codexhost output.`);
+  console.log(up
+    ? `[codexskin] restart complete: Codex is back up (codexhost pid ${app.pid}).`
+    : `[codexskin] restart FAILED: Codex did not come up - run 'codexskin start' manually.`);
+  return { killed, newPid: app.pid, up };
+}
+
+// Bridge entry: hand the actual restart to a detached helper so the serving
+// process cannot die mid-restart (see restartCodexStack notes), and so the
+// pump is free to deliver the response before Desktop closes.
+async function triggerRestartHelper() {
+  const helper = spawn(process.execPath, [fileURLToPath(import.meta.url), "restart"], {
+    detached: true, stdio: "ignore", windowsHide: true,
+  });
+  helper.unref();
+  await logFile(`[codexskin] restart requested from the theme page (helper pid ${helper.pid}).`);
+  return { triggered: true, helperPid: helper.pid };
 }
 
 // Native file picker: PowerShell WinForms (Windows), osascript (macOS),
@@ -831,7 +880,7 @@ async function handleBridgeCommand(action, payload) {
   if (action === "import") return startImportWorker();
   if (action === "check-update") return checkForUpdate(Boolean(payload?.force));
   if (action === "export-logs") return exportLogsBundle();
-  if (action === "restart") return restartCodexStack();
+  if (action === "restart") return triggerRestartHelper();
   throw new Error(`unknown bridge action: ${action}`);
 }
 
