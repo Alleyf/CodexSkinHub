@@ -27,6 +27,7 @@
     };
   }
   const CODEXSKIN_GALLERY_URL = "https://dreamskin.cc/gallery";
+  const CODEXSKIN_REPO_URL = "https://github.com/Alleyf/CodexSkinHub";
   const CODEXSKIN_UPDATE_CMD = "npm i -g codexskin-hub@latest";
   function codexskinEl(document2, tag, className, text) {
     const element = document2.createElement(tag);
@@ -44,7 +45,9 @@
       spark: '<path d="M8 1.8l1.5 4.7L14.2 8l-4.7 1.5L8 14.2 6.5 9.5 1.8 8l4.7-1.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
       refresh: '<path d="M13.4 8a5.4 5.4 0 1 1-1.7-3.9M13.5 1.9v2.9h-2.9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
       copy: '<rect x="5.4" y="5.4" width="8.2" height="8.2" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.6 5.4V3.9a1.5 1.5 0 0 0-1.5-1.5H3.9a1.5 1.5 0 0 0-1.5 1.5v5.2a1.5 1.5 0 0 0 1.5 1.5h1.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>',
-      doc: '<path d="M4 1.8h5.2L12.8 5.2v9H4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 2v3.4h3.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.8 8.4h4.4M5.8 10.8h4.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>'
+      doc: '<path d="M4 1.8h5.2L12.8 5.2v9H4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 2v3.4h3.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.8 8.4h4.4M5.8 10.8h4.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>',
+      restart: '<path d="M13.2 8.6a5.4 5.4 0 1 1-1.2-4.3M13.5 1.9v2.9h-2.9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
+      star: '<path d="M8 1.6l2 4 4.4.6-3.2 3.1.8 4.4L8 11.6l-4 2.1.8-4.4-3.2-3.1 4.4-.6z" fill="currentColor"/>'
     };
     const svg = document2.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", "0 0 16 16");
@@ -97,6 +100,11 @@
 .ds-copy.done { color: rgb(74 222 128); border-color: rgb(74 222 128 / 40%); }
 .ds-spin { flex: none; width: 12px; height: 12px; border: 2px solid var(--settings-border); border-top-color: var(--settings-focus); border-radius: 50%; animation: ds-rotate .8s linear infinite; }
 @keyframes ds-rotate { to { transform: rotate(360deg); } }
+.ds-footer { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; padding-top: 2px; }
+.ds-footer-text { font-size: 12px; color: var(--settings-muted); }
+.ds-star-btn { border-color: rgb(250 204 21 / 45%); }
+.ds-star-btn:hover { background: rgb(250 204 21 / 12%); border-color: rgb(250 204 21 / 70%); }
+.ds-star-btn svg { color: rgb(250 204 21); }
 `;
   function dreamSkinPage() {
     return Object.freeze({
@@ -128,8 +136,11 @@
         const btnImport = codexskinEl(document2, "button", "ds-btn");
         btnImport.type = "button";
         btnImport.append(codexskinSvg(document2, "zip"), document2.createTextNode("Import ZIP"));
+        const btnRestart = codexskinEl(document2, "button", "ds-btn");
+        btnRestart.type = "button";
+        btnRestart.append(codexskinSvg(document2, "restart"), document2.createTextNode("Restart Codex"));
         const toolbar = codexskinEl(document2, "div", "ds-toolbar");
-        toolbar.append(btnDir, btnImport);
+        toolbar.append(btnDir, btnImport, btnRestart);
 
         const galleryTitle = codexskinEl(document2, "div", "ds-gallery-title");
         galleryTitle.append(codexskinSvg(document2, "spark"), document2.createTextNode("Theme gallery"));
@@ -180,7 +191,17 @@
         const notice = codexskinEl(document2, "div", "ds-notice");
         notice.hidden = true;
 
-        wrap.append(chips, labelThemes, grid, toolbar, gallery, updateCard, diagCard, notice);
+        const starText = codexskinEl(
+          document2, "span", "ds-footer-text",
+          "If CodexSkinHub is useful to you, a star helps a lot:",
+        );
+        const btnStar = codexskinEl(document2, "button", "ds-btn ds-star-btn");
+        btnStar.type = "button";
+        btnStar.append(codexskinSvg(document2, "star"), document2.createTextNode("Star on GitHub"));
+        const footer = codexskinEl(document2, "div", "ds-footer");
+        footer.append(starText, btnStar);
+
+        wrap.append(chips, labelThemes, grid, toolbar, gallery, updateCard, diagCard, footer, notice);
         context.content.append(style, wrap);
 
         let disposed = false;
@@ -411,6 +432,42 @@
             exportingLogs = false;
             if (!disposed) setExportButton("Export logs", false);
           }
+        });
+
+        // One-click restart: two-step confirm (this closes Codex Desktop!),
+        // then show the notice BEFORE requesting - the page dies with the
+        // app, so the bridge response will never arrive; swallow the timeout.
+        const restartLabel = "Restart Codex";
+        let restartArmed = false;
+        let restartArmTimer = 0;
+        const setRestartButton = (label, busy) => {
+          btnRestart.replaceChildren(codexskinSvg(document2, "restart"), document2.createTextNode(label));
+          btnRestart.disabled = Boolean(busy);
+          btnRestart.style.opacity = busy ? ".6" : "";
+        };
+        btnRestart.addEventListener("click", async () => {
+          if (!restartArmed) {
+            restartArmed = true;
+            setRestartButton("Click again to confirm", false);
+            setNotice("Restarting will close and relaunch Codex Desktop. Click the button again to confirm.", "info");
+            window.clearTimeout(restartArmTimer);
+            restartArmTimer = window.setTimeout(() => {
+              restartArmed = false;
+              if (!disposed) { setRestartButton(restartLabel, false); setNotice("", "", false); }
+            }, 5000);
+            return;
+          }
+          window.clearTimeout(restartArmTimer);
+          restartArmed = false;
+          setRestartButton("Restarting...", true);
+          setNotice("Restarting Codex Desktop - it will reopen automatically in a few seconds and the theme will be re-applied.", "info", true);
+          try { await window.__codexskin.request("restart"); } catch { /* expected: the page dies mid-request */ }
+        });
+
+        // Star on GitHub - opens the repo in the default browser.
+        btnStar.addEventListener("click", async () => {
+          try { await window.__codexskin.request("open-gallery", { url: CODEXSKIN_REPO_URL }); }
+          catch (e) { setNotice(`Could not open GitHub: ${errText(e)}`, "error"); }
         });
 
         void loadList();

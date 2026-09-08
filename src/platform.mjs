@@ -282,13 +282,14 @@ export function startupEntryContent(hubRoot, dsRoot) {
   }
   const cli = path.join(hubRoot, "src", "cli.mjs");
   const node = engineNodeBin(dsRoot);
+  const xml = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
   if (IS_MAC) {
     return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>cc.dreamskin.codexskin</string>
   <key>ProgramArguments</key><array>
-    <string>${node}</string><string>${cli}</string><string>supervise</string>
+    <string>${xml(node)}</string><string>${xml(cli)}</string><string>supervise</string>
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><false/>

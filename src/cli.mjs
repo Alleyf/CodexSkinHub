@@ -35,6 +35,7 @@ import http from "node:http";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 import { findCodexhostPackage } from "./discover.mjs";
 import * as plat from "./platform.mjs";
 
@@ -66,8 +67,10 @@ const INJECTOR_LOG = path.join(DS_ROOT, "injector.log");
 const INJECTOR_ERR = path.join(DS_ROOT, "injector-error.log");
 const SKIN_STATE = path.join(HUB_ROOT, "codexskin.json");
 const GALLERY_URL = "https://dreamskin.cc/gallery";
+const REPO_URL = "https://github.com/Alleyf/CodexSkinHub";
 const IMPORT_LOG = path.join(HUB_ROOT, "codexskin-import.log");
 const URL_PREFIX_ALLOW = "https://dreamskin.cc";
+const URL_PREFIX_ALLOW_REPO = "https://github.com/Alleyf/CodexSkinHub";
 
 function die(message) {
   console.error(`[codexskin] error: ${message}`);
@@ -129,7 +132,12 @@ function readJsonSafe(file) {  try {
 }
 
 function writeJsonNoBom(file, value) {
-  fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\n", "utf8");
+  const temp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(temp, JSON.stringify(value, null, 2) + "\n", "utf8");
+  // Windows cannot rename over an existing file; remove only the target after
+  // the complete temporary file has been written.
+  fs.rmSync(file, { force: true });
+  fs.renameSync(temp, file);
 }
 
 // Own package version. Preferred source is the package.json copied next to
@@ -387,8 +395,8 @@ async function openThemesDir() {
 
 function openGallery(url) {
   const target = String(url ?? GALLERY_URL);
-  if (!target.startsWith(URL_PREFIX_ALLOW)) {
-    throw new Error(`only ${URL_PREFIX_ALLOW} URLs may be opened from the bridge`);
+  if (!target.startsWith(URL_PREFIX_ALLOW) && !target.startsWith(URL_PREFIX_ALLOW_REPO)) {
+    throw new Error(`only ${URL_PREFIX_ALLOW} or ${URL_PREFIX_ALLOW_REPO} URLs may be opened from the bridge`);
   }
   plat.openUrl(target);
   console.log(`[codexskin] opening ${target} in the default browser`);
@@ -479,6 +487,39 @@ async function exportLogsBundle() {
   return { path: dest, dir: logsDir, opened: reveal.opened, error: reveal.error };
 }
 
+// One-click restart from the theme page: kill the codexhost / Codex Desktop
+// tree and relaunch codexhost detached. The supervisor keeps running the whole
+// time - its loop discovers the new CDP endpoint and re-aligns the injector
+// within seconds, so no manual `codexskin start` is needed afterwards.
+// NOTE: the page that requested this dies with Desktop, so the bridge deliver
+// will never arrive - the renderer shows its own notice BEFORE calling.
+async function restartCodexStack() {
+  const skin = readJsonSafe(SKIN_STATE) ?? {};
+  const killed = [];
+  const hostPid = Number(skin.codexHostPid) || 0;
+  if (hostPid && (await processAlive(hostPid))) {
+    await plat.killTree(hostPid, execFileText).catch(() => {});
+    killed.push(hostPid);
+  }
+  // Desktop may have been started outside codexhost (or re-parented out of
+  // the codexhost tree) - sweep any remaining ChatGPT.exe processes too.
+  const pids = await plat.findDesktopPids(execFileText);
+  for (const p of pids) {
+    await plat.killTree(p, execFileText).catch(() => {});
+    killed.push(p);
+  }
+  await new Promise((r) => setTimeout(r, 1500));
+  const app = spawnCodexhost({ detached: true, stdio: "ignore", windowsHide: true });
+  app.unref();
+  writeJsonNoBom(SKIN_STATE, {
+    ...(readJsonSafe(SKIN_STATE) ?? {}),
+    codexHostPid: app.pid,
+    restartedAt: new Date().toISOString(),
+  });
+  console.log(`[codexskin] restart: killed ${killed.length ? `pids ${killed.join(", ")}` : "nothing (not running)"}; relaunched codexhost (pid ${app.pid}).`);
+  return { killed, newPid: app.pid };
+}
+
 // Native file picker: PowerShell WinForms (Windows), osascript (macOS),
 // zenity (Linux). Delegates to platform.mjs.
 async function pickZipViaDialog() {
@@ -499,6 +540,15 @@ function execFileStrict(cmd, args) {
 }
 
 async function extractZip(zip, dest) {
+  const listing = plat.isWindows()
+    ? await execFileStrict(path.join(process.env.SystemRoot ?? "C:\\windows", "System32", "tar.exe"), ["-tf", zip])
+    : await execFileStrict("unzip", ["-Z1", zip]).catch(() => execFileStrict("tar", ["-tf", zip]));
+  for (const entry of String(listing).split(/\r?\n/).map((x) => x.trim()).filter(Boolean)) {
+    const normalized = entry.replaceAll("\\", "/");
+    if (normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized) || normalized.split("/").includes("..")) {
+      throw new Error(`unsafe archive entry: ${entry}`);
+    }
+  }
   if (plat.isWindows()) {
     const systemTar = path.join(process.env.SystemRoot ?? "C:\\windows", "System32", "tar.exe");
     await execFileStrict(systemTar, ["-xf", zip, "-C", dest]);
@@ -537,6 +587,7 @@ async function installThemeFromDir(srcDir, fallbackName) {
   if (!manifest) throw new Error("theme.json not found in the archive - not a Dream Skin theme");
   const id = sanitizeDirName(manifest.id ?? fallbackName);
   const dest = path.join(THEMES_DIR, id);
+  if (fs.existsSync(dest)) throw new Error(`theme already exists: ${id}; remove it before importing a replacement`);
   await fsp.mkdir(THEMES_DIR, { recursive: true });
   await fsp.rm(dest, { recursive: true, force: true });
   await fsp.cp(srcDir, dest, { recursive: true });
@@ -745,6 +796,7 @@ async function handleBridgeCommand(action, payload) {
   if (action === "import") return startImportWorker();
   if (action === "check-update") return checkForUpdate(Boolean(payload?.force));
   if (action === "export-logs") return exportLogsBundle();
+  if (action === "restart") return restartCodexStack();
   throw new Error(`unknown bridge action: ${action}`);
 }
 
@@ -1104,12 +1156,14 @@ function curlJson(url) {
   try { return JSON.parse(r.stdout); } catch { return null; }
 }
 
-function downloadFile(url, dest, label) {
+function downloadFile(url, dest, label, expectedDigest) {
   console.log(`[codexskin] downloading ${label} ...`);
   const r = spawnSync(plat.isWindows() ? "curl.exe" : "curl", ["-L", "-f", "--retry", "2", "--max-time", "600", "-o", dest, ...proxyArgs(), url], {
     stdio: "inherit", windowsHide: true, shell: false,
   });
-  return r.status === 0 && fs.existsSync(dest);
+  if (r.status !== 0 || !fs.existsSync(dest) || !expectedDigest) return false;
+  const actual = `sha256:${createHash("sha256").update(fs.readFileSync(dest)).digest("hex")}`;
+  return actual.toLowerCase() === String(expectedDigest).toLowerCase();
 }
 
 function detectCodexDesktop() {
@@ -1223,7 +1277,7 @@ async function cmdSetup(flags = {}) {
       const ok = assumeYes || (await ask(`Download and run the Dream Skin installer? [Y/n] `)).match(/^n/i) === null;
       if (!ok) {
         console.log("  skipped Dream Skin installer");
-      } else if (downloadFile(asset.browser_download_url, dest, asset.name) && fs.existsSync(dest)) {
+      } else if (downloadFile(asset.browser_download_url, dest, asset.name, asset.digest) && fs.existsSync(dest)) {
         if (isWin) {
           console.log("  -> launching installer (close Codex first if it is running) ...");
           const inst = spawnSync(dest, assumeYes ? ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"] : [], {
@@ -1308,6 +1362,7 @@ if (invokedDirectly) {
     else if (cmd === "import") await runImportFlow();
     else if (cmd === "import-worker") await runImportFlow();
     else if (cmd === "doctor") await cmdDoctor();
+    else if (cmd === "restart") await restartCodexStack();
     else if (cmd === "export-logs" || cmd === "logs") await exportLogsBundle();
     else if (cmd === "repair") await cmdRepair();
     else if (cmd === "setup") await cmdSetup(new Set(rest.map((a) => a.replace(/^--+/, ""))));
@@ -1324,6 +1379,7 @@ if (invokedDirectly) {
       console.log("  codexskin inject                   align injector to the running Codex once");
       console.log("  codexskin doctor                   health-check the whole integration");
       console.log("  codexskin export-logs              bundle all logs into one text file and open the folder");
+      console.log("  codexskin restart                  close and relaunch Codex Desktop (theme page has this too)");
       console.log("  codexskin repair                   fix Codex Desktop AppX state after a failed launch");
       console.log("  codexskin setup                    bootstrap prerequisites + wire the integration");
       console.log("  codexskin down                     stop supervisor, codexhost wrapper and injector");
