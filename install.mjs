@@ -18,12 +18,11 @@
 // or `node src/patch.mjs --revert` strips cleanly.
 
 import {
-  accessSync, chmodSync, constants, cpSync, existsSync, mkdirSync,
-  readFileSync, writeFileSync, rmSync,
+  readFileSync, writeFileSync, existsSync, mkdirSync, cpSync, rmSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
+import { spawnSync, spawn } from "node:child_process";
 // Single source of truth for platform logic (data home, DS root candidates,
 // shim/startup content). install.mjs used to duplicate all of it and drifted.
 import {
@@ -64,26 +63,69 @@ if (!dsRoot) {
 // Whatever node is running this installer is by definition a working node.
 const node = process.execPath;
 
+function stopRunningSupervisor() {
+  const statePath = join(HUB_ROOT, "codexskin.json");
+  let pid = 0;
+  try { pid = Number(JSON.parse(readFileSync(statePath, "utf8").replace(/^\uFEFF/, "")).supervisePid) || 0; } catch { return 0; }
+  if (!pid) return 0;
+  if (IS_WIN) {
+    const r = spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    if (r.status !== 0) return 0;
+  } else {
+    try { process.kill(pid); } catch { return 0; }
+  }
+  try {
+    const state = JSON.parse(readFileSync(statePath, "utf8").replace(/^\uFEFF/, ""));
+    if (Number(state.supervisePid) === pid) {
+      state.supervisePid = 0;
+      writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n", "utf8");
+    }
+  } catch { /* state cleanup is best effort */ }
+  log(`stopped running supervisor pid ${pid} before runtime replacement`);
+  return pid;
+}
+
+function startSupervisorAfterInstall() {
+  const cli = join(HUB_ROOT, "src", "cli.mjs");
+  if (!existsSync(cli)) return;
+  const child = spawn(node, [cli, "supervise"], { detached: true, stdio: "ignore", windowsHide: true });
+  child.unref();
+  log(`supervisor restart requested (pid ${child.pid})`);
+}
+
 // 1. Runtime copy.
 //    Guard: when invoked from the runtime home itself (codexskin setup ->
 //    %LOCALAPPDATA%\CodexSkinHub\install.mjs) the source and the destination
 //    are the same directory - deleting src first would leave nothing to copy.
 //    The runtime is already in place there, so skip the copy entirely.
 const isRuntimeSelfInstall = resolve(repo) === resolve(HUB_ROOT);
+// A live supervisor holds the runtime src/ directory open (its CWD / loaded
+// module), and Windows rmdir of an in-use directory fails with EBUSY - which
+// used to hard-fail every `npm i -g` upgrade. Stop it, swap, relaunch.
+const stoppedSupervisorPid = isRuntimeSelfInstall ? 0 : stopRunningSupervisor();
 if (isRuntimeSelfInstall) {
   log("running from the runtime home - src already in place, skipping copy");
 } else {
   if (!existsSync(join(repo, "src"))) {
     die(`source tree missing at ${join(repo, "src")} - reinstall the package`);
   }
-  mkdirSync(join(HUB_ROOT, "src"), { recursive: true });
-  rmSync(join(HUB_ROOT, "src"), { recursive: true, force: true });
-  cpSync(join(repo, "src"), join(HUB_ROOT, "src"), { recursive: true });
-  for (const f of ["install.mjs", "uninstall.mjs", "package.json"]) {
-    if (existsSync(join(repo, f))) cpSync(join(repo, f), join(HUB_ROOT, f));
+  let copied = false;
+  try {
+    mkdirSync(join(HUB_ROOT, "src"), { recursive: true });
+    rmSync(join(HUB_ROOT, "src"), { recursive: true, force: true });
+    cpSync(join(repo, "src"), join(HUB_ROOT, "src"), { recursive: true });
+    copied = true;
+  } catch (e) {
+    die(`could not replace the runtime at ${join(HUB_ROOT, "src")} (${e.code ?? e.message}) - stop codexskin processes and retry`);
   }
-  log(`runtime copied to ${join(HUB_ROOT, "src")}`);
+  if (copied) {
+    for (const f of ["install.mjs", "uninstall.mjs", "package.json"]) {
+      if (existsSync(join(repo, f))) cpSync(join(repo, f), join(HUB_ROOT, f));
+    }
+    log(`runtime copied to ${join(HUB_ROOT, "src")}`);
+  }
 }
+if (stoppedSupervisorPid) startSupervisorAfterInstall();
 
 // 2. Config.
 writeFileSync(
