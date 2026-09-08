@@ -1067,10 +1067,19 @@ async function cmdSupervise() {
   assertEngine();
   const skin = readJsonSafe(SKIN_STATE) ?? {};
   if (skin.supervisePid && (await processAlive(skin.supervisePid))) {
-    console.log(`[codexskin] supervisor already running (pid ${skin.supervisePid}).`);
-    return;
+    // A daemon from BEFORE the current release must not keep answering with
+    // stale code (real-world case: a 0.3.x supervisor survived an upgrade to
+    // 0.4.x and ran the old logic forever). Replace it.
+    if (String(skin.superviseVersion ?? "") === PKG_VERSION) {
+      console.log(`[codexskin] supervisor already running (pid ${skin.supervisePid}, v${skin.superviseVersion}).`);
+      return;
+    }
+    console.log(`[codexskin] replacing stale supervisor (pid ${skin.supervisePid}, ${skin.superviseVersion ? `v${skin.superviseVersion}` : "pre-versioning"}) with v${PKG_VERSION}...`);
+    void logFile(`replacing stale supervisor (pid ${skin.supervisePid}, ${skin.superviseVersion ? `v${skin.superviseVersion}` : "pre-versioning"}) with v${PKG_VERSION}`);
+    await plat.killTree(Number(skin.supervisePid), execFileText).catch(() => {});
+    await new Promise((r) => setTimeout(r, 800));
   }
-  const skinNow = { ...skin, supervisePid: process.pid, superviseStartedAt: new Date().toISOString() };
+  const skinNow = { ...skin, supervisePid: process.pid, superviseStartedAt: new Date().toISOString(), superviseVersion: PKG_VERSION };
   writeJsonNoBom(SKIN_STATE, skinNow);
   const logStream = fs.createWriteStream(path.join(HUB_ROOT, "codexskin-supervise.log"), { flags: "a" });
   const origLog = console.log;

@@ -48,6 +48,19 @@ const NODE_EXE = engineNodeBin(DS_ROOT);
 const CODEXSKIN = path.join(RUNTIME_SRC, "cli.mjs");
 const SKIN_STATE = path.join(HUB_ROOT, "codexskin.json");
 const SUPERVISE_LOG = path.join(HUB_ROOT, "codexskin-supervise.log");
+
+// Own package version (same probe as cli.mjs). Used to replace supervisors
+// that were started by an OLDER release - a pre-versioning daemon otherwise
+// survives every upgrade and keeps answering bridge actions with stale code.
+const PKG_VERSION = (() => {
+  for (const p of [path.join(RUNTIME_SRC, "..", "package.json"), path.join(HUB_ROOT, "package.json")]) {
+    try {
+      const v = JSON.parse(fs.readFileSync(p, "utf8")).version;
+      if (v) return String(v);
+    } catch { /* probe next */ }
+  }
+  return "unknown";
+})();
 const PATCHER = path.join(RUNTIME_SRC, "patch.mjs");
 
 function enginePresent() {
@@ -91,18 +104,45 @@ export function superviseDetached() {
   if (!enginePresent()) return;
   healDetached();
   let supervisePid = 0;
+  let superviseVersion = "";
   try {
-    const raw = fs.readFileSync(SKIN_STATE, "utf8");
-    supervisePid = Number(JSON.parse(raw.replace(/^\uFEFF/, "")).supervisePid) || 0;
+    const s = JSON.parse(fs.readFileSync(SKIN_STATE, "utf8").replace(/^\uFEFF/, ""));
+    supervisePid = Number(s.supervisePid) || 0;
+    superviseVersion = String(s.superviseVersion ?? "");
   } catch {
     supervisePid = 0;
   }
   if (supervisePid > 0) {
+    let alive = false;
     try {
       process.kill(supervisePid, 0); // throws if not running
-      return; // supervisor already alive; nothing to do
+      alive = true;
     } catch {
       supervisePid = 0;
+    }
+    if (alive) {
+      // A supervisor from an older release must not keep serving stale code -
+      // the v0.3.9 self-heal only helps daemons STARTED with 0.3.9+ code, so
+      // pre-versioning daemons would survive every upgrade forever.
+      if (superviseVersion === PKG_VERSION) return; // current code; nothing to do
+      try {
+        fs.appendFileSync(
+          SUPERVISE_LOG,
+          `[${new Date().toISOString()}] [codexskin] hook: replacing stale supervisor (pid ${supervisePid}, ${superviseVersion ? `v${superviseVersion}` : "pre-versioning"}) with v${PKG_VERSION}\n`,
+        );
+        if (process.platform === "win32") {
+          spawnSync("taskkill", ["/PID", String(supervisePid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+        } else {
+          try { process.kill(supervisePid); } catch { /* already gone */ }
+        }
+      } catch { /* best effort - fall through and try to spawn anyway */ }
+      try {
+        const s = JSON.parse(fs.readFileSync(SKIN_STATE, "utf8").replace(/^\uFEFF/, ""));
+        if (Number(s.supervisePid) === supervisePid) {
+          s.supervisePid = 0;
+          fs.writeFileSync(SKIN_STATE, JSON.stringify(s, null, 2) + "\n", "utf8");
+        }
+      } catch { /* spawn claims ownership on its own */ }
     }
   }
   const out = fs.openSync(SUPERVISE_LOG, "a");
