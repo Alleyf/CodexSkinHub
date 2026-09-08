@@ -395,6 +395,85 @@ function openGallery(url) {
   return { opened: target };
 }
 
+// ---------------------------------------------------------------------------
+// Diagnostics: bundle every codexskin / Dream Skin log into one timestamped
+// text file and reveal the folder - for issue reports and remote debugging
+// (e.g. a machine where the injector crash-loops and nobody can read the
+// stderr remotely).
+// ---------------------------------------------------------------------------
+
+// Cap per log file so one runaway log cannot produce a giant bundle.
+const LOG_TAIL_BYTES = 256 * 1024;
+const LOGS_KEEP = 10;
+
+function tailFile(file, maxBytes = LOG_TAIL_BYTES) {
+  try {
+    const stat = fs.statSync(file);
+    if (stat.size <= maxBytes) return fs.readFileSync(file, "utf8");
+    const fh = fs.openSync(file, "r");
+    try {
+      const buf = Buffer.alloc(maxBytes);
+      fs.readSync(fh, buf, 0, maxBytes, stat.size - maxBytes);
+      return "[... head truncated ...]\n" + buf.toString("utf8");
+    } finally {
+      fs.closeSync(fh);
+    }
+  } catch {
+    return "(not available)";
+  }
+}
+
+async function exportLogsBundle() {
+  const stamp = new Date().toISOString().replace(/[:T]/g, "-").replace(/\..+/, "");
+  const logsDir = path.join(HUB_ROOT, "logs");
+  await fsp.mkdir(logsDir, { recursive: true });
+  const dest = path.join(logsDir, `codexskin-logs-${stamp}.txt`);
+
+  const lines = [];
+  const push = (s = "") => lines.push(s);
+  push("CodexSkinHub diagnostics bundle");
+  push(`generated : ${new Date().toISOString()}`);
+  push(`version   : ${PKG_VERSION}`);
+  push(`platform  : ${process.platform} ${process.arch} (node ${process.versions.node})`);
+  push(`hub root  : ${HUB_ROOT}`);
+  push(`ds root   : ${DS_ROOT}`);
+  push(`engine ok : ${fs.existsSync(path.join(DS_ROOT, "engine", "scripts", "injector.mjs"))}`);
+  push(`node used : ${NODE_EXE}`);
+  push(`config    : ${JSON.stringify(CFG)}`);
+  const ds = readJsonSafe(DS_STATE) ?? {};
+  push(`ds state  : ${JSON.stringify(ds)}`);
+  try {
+    const { entries } = await listThemes();
+    push(`themes    : ${entries.map((t) => t.id).join(", ") || "(none)"}`);
+  } catch { /* diagnostics must never fail on listing */ }
+  push("");
+  for (const [label, file] of [
+    ["supervisor log", path.join(HUB_ROOT, "codexskin-supervise.log")],
+    ["import log", IMPORT_LOG],
+    ["injector stdout", INJECTOR_LOG],
+    ["injector stderr", INJECTOR_ERR],
+  ]) {
+    push(`===== ${label} (${file}) =====`);
+    push(tailFile(file));
+    push("");
+  }
+  await fsp.writeFile(dest, lines.join("\r\n") + "\r\n", "utf8");
+
+  // Keep only the newest LOGS_KEEP bundles.
+  try {
+    const bundles = (await fsp.readdir(logsDir))
+      .filter((n) => /^codexskin-logs-.*\.txt$/.test(n))
+      .sort();
+    for (const old of bundles.slice(0, Math.max(0, bundles.length - LOGS_KEEP))) {
+      await fsp.rm(path.join(logsDir, old), { force: true }).catch(() => {});
+    }
+  } catch { /* pruning is best-effort */ }
+
+  plat.openPath(logsDir);
+  console.log(`[codexskin] logs exported: ${dest}`);
+  return { path: dest, dir: logsDir };
+}
+
 // Native file picker: PowerShell WinForms (Windows), osascript (macOS),
 // zenity (Linux). Delegates to platform.mjs.
 async function pickZipViaDialog() {
@@ -660,6 +739,7 @@ async function handleBridgeCommand(action, payload) {
   if (action === "open-gallery") return openGallery(payload?.url);
   if (action === "import") return startImportWorker();
   if (action === "check-update") return checkForUpdate(Boolean(payload?.force));
+  if (action === "export-logs") return exportLogsBundle();
   throw new Error(`unknown bridge action: ${action}`);
 }
 
@@ -1181,6 +1261,7 @@ export {
   runImportFlow,
   handleBridgeCommand,
   bridgeStatus,
+  exportLogsBundle,
 };
 
 // CLI dispatch - only when executed directly (importable as a library otherwise).
@@ -1212,6 +1293,7 @@ if (invokedDirectly) {
     else if (cmd === "import") await runImportFlow();
     else if (cmd === "import-worker") await runImportFlow();
     else if (cmd === "doctor") await cmdDoctor();
+    else if (cmd === "export-logs" || cmd === "logs") await exportLogsBundle();
     else if (cmd === "repair") await cmdRepair();
     else if (cmd === "setup") await cmdSetup(new Set(rest.map((a) => a.replace(/^--+/, ""))));
     else if (cmd === "help" || cmd === "--help" || cmd === "-h") {
@@ -1226,6 +1308,7 @@ if (invokedDirectly) {
       console.log("  codexskin status                   show endpoint / injector / theme state");
       console.log("  codexskin inject                   align injector to the running Codex once");
       console.log("  codexskin doctor                   health-check the whole integration");
+      console.log("  codexskin export-logs              bundle all logs into one text file and open the folder");
       console.log("  codexskin repair                   fix Codex Desktop AppX state after a failed launch");
       console.log("  codexskin setup                    bootstrap prerequisites + wire the integration");
       console.log("  codexskin down                     stop supervisor, codexhost wrapper and injector");

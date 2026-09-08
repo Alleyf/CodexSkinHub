@@ -43,7 +43,8 @@
       palette: '<path d="M8 1.8a6.2 6.2 0 1 0 0 12.4c1 0 1.6-.7 1.6-1.5 0-1.5 1.2-1.7 2.4-1.7 1.4 0 2.2-1 2.2-2.4A6.2 6.2 0 0 0 8 1.8z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="5.1" cy="6.3" r="1" fill="currentColor"/><circle cx="8" cy="4.7" r="1" fill="currentColor"/><circle cx="10.9" cy="6.3" r="1" fill="currentColor"/>',
       spark: '<path d="M8 1.8l1.5 4.7L14.2 8l-4.7 1.5L8 14.2 6.5 9.5 1.8 8l4.7-1.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
       refresh: '<path d="M13.4 8a5.4 5.4 0 1 1-1.7-3.9M13.5 1.9v2.9h-2.9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
-      copy: '<rect x="5.4" y="5.4" width="8.2" height="8.2" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.6 5.4V3.9a1.5 1.5 0 0 0-1.5-1.5H3.9a1.5 1.5 0 0 0-1.5 1.5v5.2a1.5 1.5 0 0 0 1.5 1.5h1.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>'
+      copy: '<rect x="5.4" y="5.4" width="8.2" height="8.2" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.6 5.4V3.9a1.5 1.5 0 0 0-1.5-1.5H3.9a1.5 1.5 0 0 0-1.5 1.5v5.2a1.5 1.5 0 0 0 1.5 1.5h1.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>',
+      doc: '<path d="M4 1.8h5.2L12.8 5.2v9H4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 2v3.4h3.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.8 8.4h4.4M5.8 10.8h4.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>'
     };
     const svg = document2.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", "0 0 16 16");
@@ -162,10 +163,24 @@
         const updateCard = codexskinEl(document2, "div", "ds-gallery");
         updateCard.append(updLeft, btnUpdate);
 
+        const diagTitle = codexskinEl(document2, "div", "ds-gallery-title");
+        diagTitle.append(codexskinSvg(document2, "doc"), document2.createTextNode("Diagnostics"));
+        const diagDesc = codexskinEl(
+          document2, "div", "ds-gallery-desc",
+          "Bundle all codexskin / Dream Skin logs into one text file and open the folder - attach it when reporting an issue.",
+        );
+        const diagLeft = codexskinEl(document2, "div");
+        diagLeft.append(diagTitle, diagDesc);
+        const btnExportLogs = codexskinEl(document2, "button", "ds-btn");
+        btnExportLogs.type = "button";
+        btnExportLogs.append(codexskinSvg(document2, "doc"), document2.createTextNode("Export logs"));
+        const diagCard = codexskinEl(document2, "div", "ds-gallery");
+        diagCard.append(diagLeft, btnExportLogs);
+
         const notice = codexskinEl(document2, "div", "ds-notice");
         notice.hidden = true;
 
-        wrap.append(chips, labelThemes, grid, toolbar, gallery, updateCard, notice);
+        wrap.append(chips, labelThemes, grid, toolbar, gallery, updateCard, diagCard, notice);
         context.content.append(style, wrap);
 
         let disposed = false;
@@ -371,6 +386,29 @@
           }
         };
         btnUpdate.addEventListener("click", () => void checkUpdate(true));
+
+        // Diagnostics: bundle the supervisor / injector / import logs into one
+        // text file (done by the supervisor) and reveal it in Explorer.
+        let exportingLogs = false;
+        const setExportButton = (label, busy) => {
+          btnExportLogs.replaceChildren(codexskinSvg(document2, "doc"), document2.createTextNode(label));
+          btnExportLogs.disabled = Boolean(busy);
+          btnExportLogs.style.opacity = busy ? ".6" : "";
+        };
+        btnExportLogs.addEventListener("click", async () => {
+          if (exportingLogs) return;
+          exportingLogs = true;
+          setExportButton("Exporting...", true);
+          try {
+            const r = await window.__codexskin.request("export-logs");
+            if (!disposed) setNotice(`Logs exported: ${r?.path ?? "(unknown location)"}`, "ok");
+          } catch (e) {
+            if (!disposed) setNotice(`Log export failed: ${errText(e)}`, "error");
+          } finally {
+            exportingLogs = false;
+            if (!disposed) setExportButton("Export logs", false);
+          }
+        });
 
         void loadList();
         void loadState();
