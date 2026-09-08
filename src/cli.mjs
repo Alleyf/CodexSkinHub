@@ -385,6 +385,11 @@ async function cmdInject() {
 
 function startSupervisorLoop({ log = () => {}, intervalMs = 4000 } = {}) {
   let busy = false;
+  // Churn observability: remember the injector we last saw/born so that when
+  // it dies on an UNCHANGED endpoint we can log its lifetime. A diagnostics
+  // bundle full of "aligned (pid X)" with no timestamps cannot tell a 3s
+  // restart storm from a weekly blip - this line answers it directly.
+  let lastInjector = { pid: 0, startedAt: 0 };
   return setInterval(async () => {
     // Ownership check - see startBridgeLoop: a foreground `codexskin start`
     // must not fight the registered hook-spawned supervisor over the injector.
@@ -397,13 +402,20 @@ function startSupervisorLoop({ log = () => {}, intervalMs = 4000 } = {}) {
       const endpoint = await discoverCdp();
       if (!endpoint) return;
       const { pid, port } = await liveInjectorPid();
-      if (pid && port === endpoint.port) return;
+      if (pid && port === endpoint.port) {
+        if (lastInjector.pid !== pid) lastInjector = { pid, startedAt: Date.now() };
+        return;
+      }
       if (pid && port !== endpoint.port) {
         log(`[codexskin] Codex endpoint moved ${port} -> ${endpoint.port}, realigning injector...`);
+      } else if (lastInjector.pid) {
+        const lifetime = lastInjector.startedAt ? Math.round((Date.now() - lastInjector.startedAt) / 1000) : 0;
+        log(`[codexskin] injector (pid ${lastInjector.pid}) exited after ~${lifetime}s on unchanged endpoint ${endpoint.port}; restarting...`);
       } else {
         log(`[codexskin] Codex endpoint on port ${endpoint.port}, starting injector...`);
       }
-      await startInjector(endpoint);
+      const newPid = await startInjector(endpoint);
+      lastInjector = { pid: newPid, startedAt: Date.now() };
     } catch (e) {
       console.error(`[codexskin] supervisor: ${e.message}`);
     } finally {
