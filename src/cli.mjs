@@ -967,6 +967,90 @@ function startBridgeLoop({ log = () => {}, intervalMs = 1500 } = {}) {
   }, intervalMs);
 }
 
+// ---------------------------------------------------------------------------
+// Log housekeeping: rolling logs are capped by size, exported bundles by age
+// ---------------------------------------------------------------------------
+
+const LOG_MAX_BYTES = 2 * 1024 * 1024; // rolling logs: truncate beyond this
+const LOG_KEEP_BYTES = 512 * 1024;     // newest tail kept when truncating
+const BUNDLE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000; // bundles older than 14d
+const BUNDLE_KEEP_COUNT = 10;          // ...or beyond the newest 10
+
+// Truncate a rolling log in place, keeping only the newest LOG_KEEP_BYTES
+// plus a marker line. Raw fds so it also works while the supervisor's own
+// logStream holds the supervise log open - appends use EOF semantics, so the
+// next write just continues after the truncated content.
+function truncateLogFile(p, log) {
+  let fd;
+  try {
+    fd = fs.openSync(p, "r+");
+    const size = fs.fstatSync(fd).size;
+    if (size <= LOG_MAX_BYTES) return false;
+    const keep = Buffer.alloc(Math.min(LOG_KEEP_BYTES, size));
+    fs.readSync(fd, keep, 0, keep.length, size - keep.length);
+    const marker = Buffer.from(`\n[codexskin] log truncated ${new Date().toISOString()} (was ${size} bytes, kept newest ${keep.length})\n`);
+    fs.ftruncateSync(fd, 0);
+    fs.writeSync(fd, marker, 0, marker.length, 0);
+    fs.writeSync(fd, keep, 0, keep.length, marker.length);
+    log(`[codexskin] logs: truncated ${p} (${size} -> ${marker.length + keep.length} bytes)`);
+    return true;
+  } catch (e) {
+    if (e?.code !== "ENOENT") log(`[codexskin] logs: could not truncate ${p}: ${e.message}`);
+    return false;
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* already closed */ } }
+  }
+}
+
+// Periodic maintenance: cap every rolling log by size, prune exported
+// diagnostics bundles by age and count. Called at supervisor boot and every
+// 6 hours; also available as `codexskin clean-logs`.
+async function maintainLogs({ log = () => {} } = {}) {
+  for (const p of [
+    path.join(HUB_ROOT, "codexskin-supervise.log"),
+    IMPORT_LOG,
+    INJECTOR_LOG,
+    INJECTOR_ERR,
+  ]) {
+    truncateLogFile(p, log);
+  }
+  try {
+    const logsDir = path.join(HUB_ROOT, "logs");
+    const names = (await fsp.readdir(logsDir)).filter((f) => /^codexskin-logs-.*\.txt$/.test(f));
+    if (!names.length) return;
+    const bundles = [];
+    for (const f of names) {
+      const full = path.join(logsDir, f);
+      const st = await fsp.stat(full).catch(() => null);
+      if (st) bundles.push({ f: full, m: st.mtimeMs });
+    }
+    bundles.sort((a, b) => b.m - a.m);
+    const cutoff = Date.now() - BUNDLE_MAX_AGE_MS;
+    const removed = [];
+    for (let i = 0; i < bundles.length; i++) {
+      if (i < BUNDLE_KEEP_COUNT && bundles[i].m >= cutoff) continue;
+      await fsp.rm(bundles[i].f, { force: true }).catch(() => {});
+      removed.push(bundles[i].f);
+    }
+    if (removed.length) {
+      log(`[codexskin] logs: removed ${removed.length} old diagnostics bundle(s) (older than 14 days or beyond newest ${BUNDLE_KEEP_COUNT})`);
+    }
+  } catch (e) {
+    if (e?.code !== "ENOENT") log(`[codexskin] logs: bundle cleanup failed: ${e.message}`);
+  }
+}
+
+async function cmdCleanLogs() {
+  const before = [];
+  for (const p of [path.join(HUB_ROOT, "codexskin-supervise.log"), IMPORT_LOG, INJECTOR_LOG, INJECTOR_ERR]) {
+    const st = await fsp.stat(p).then((s) => s.size).catch(() => 0);
+    if (st) before.push(`${path.basename(p)}: ${(st / 1024).toFixed(0)} KB`);
+  }
+  console.log(`[codexskin] before: ${before.length ? before.join(", ") : "no logs yet"}`);
+  await maintainLogs({ log: (...a) => console.log(...a) });
+  console.log("[codexskin] log maintenance done (rolling logs capped at 2 MB / 512 KB tail; bundles older than 14 days or beyond the newest 10 removed).");
+}
+
 async function cmdSupervise() {
   assertEngine();
   const skin = readJsonSafe(SKIN_STATE) ?? {};
@@ -985,6 +1069,10 @@ async function cmdSupervise() {
     origLog(...a);
   };
   console.log(`[codexskin] supervisor started (pid ${process.pid}).`);
+  // Log housekeeping: once at boot, then every 6 hours, cap rolling logs and
+  // prune old diagnostics bundles so logs can never grow unbounded.
+  void maintainLogs({ log: (...a) => console.log(...a) });
+  const logsweep = setInterval(() => void maintainLogs({ log: (...a) => console.log(...a) }), 6 * 60 * 60 * 1000);
   const timer = startSupervisorLoop({ log: (...a) => console.log(...a) });
   // NOTE: do NOT unref these intervals - they are what keeps this daemon alive.
   const bridge = startBridgeLoop({ log: (...a) => console.log(...a) });
@@ -1017,6 +1105,7 @@ async function cmdSupervise() {
   void timer;
   void bridge;
   void heartbeat;
+  void logsweep;
 }
 
 async function stopSupervisor() {
@@ -1476,6 +1565,7 @@ if (invokedDirectly) {
     else if (cmd === "doctor") await cmdDoctor();
     else if (cmd === "restart") await restartCodexStack();
     else if (cmd === "export-logs" || cmd === "logs") await exportLogsBundle();
+    else if (cmd === "clean-logs" || cmd === "clean") await cmdCleanLogs();
     else if (cmd === "repair") await cmdRepair();
     else if (cmd === "setup") await cmdSetup(new Set(rest.map((a) => a.replace(/^--+/, ""))));
     else if (cmd === "help" || cmd === "--help" || cmd === "-h") {
@@ -1491,6 +1581,7 @@ if (invokedDirectly) {
       console.log("  codexskin inject                   align injector to the running Codex once");
       console.log("  codexskin doctor                   health-check the whole integration");
       console.log("  codexskin export-logs              bundle all logs into one text file and open the folder");
+      console.log("  codexskin clean-logs               cap rolling logs by size and prune old export bundles");
       console.log("  codexskin restart                  close and relaunch Codex Desktop (theme page has this too)");
       console.log("  codexskin repair                   fix Codex Desktop AppX state after a failed launch");
       console.log("  codexskin setup                    bootstrap prerequisites + wire the integration");
