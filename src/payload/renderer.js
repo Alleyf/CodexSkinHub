@@ -154,7 +154,6 @@
         btnCopy.append(codexskinSvg(document2, "copy"), copyLabel);
         const updCmd = codexskinEl(document2, "div", "ds-cmd");
         updCmd.append(cmdText, btnCopy);
-        updCmd.hidden = true;
         const updLeft = codexskinEl(document2, "div");
         updLeft.append(updTitle, updDesc, updCmd);
         const btnUpdate = codexskinEl(document2, "button", "ds-btn primary");
@@ -299,7 +298,6 @@
           return 0;
         };
         const renderUpdate = (r) => {
-          updCmd.hidden = true;
           if (!r || typeof r !== "object") { updDesc.textContent = "Update check unavailable."; return; }
           const cur = r.current ?? "?";
           const lat = r.latest;
@@ -309,7 +307,6 @@
           }
           if (cmpSemver(lat, cur) > 0) {
             updDesc.textContent = `New version ${lat} available (installed: v${cur}). Run this to update:`;
-            updCmd.hidden = false;
           } else if (cmpSemver(lat, cur) < 0) {
             updDesc.textContent = `Up to date (v${cur}; published: v${lat} - this is a newer local build).`;
           } else {
