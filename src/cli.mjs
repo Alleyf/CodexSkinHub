@@ -72,6 +72,12 @@ const IMPORT_LOG = path.join(HUB_ROOT, "codexskin-import.log");
 const URL_PREFIX_ALLOW = "https://dreamskin.cc";
 const URL_PREFIX_ALLOW_REPO = "https://github.com/Alleyf/CodexSkinHub";
 
+function isAllowedExternalUrl(value) {
+  const target = String(value ?? "");
+  return target === URL_PREFIX_ALLOW || target.startsWith(`${URL_PREFIX_ALLOW}/`) ||
+    target === URL_PREFIX_ALLOW_REPO || target.startsWith(`${URL_PREFIX_ALLOW_REPO}/`);
+}
+
 function die(message) {
   console.error(`[codexskin] error: ${message}`);
   process.exit(1);
@@ -251,6 +257,20 @@ function processAlive(pid) {
   );
 }
 
+// Image name of a pid ("" when unknown) - used to double-check a stale state
+// pid before killing it: pids get reused, and taskkill /T on a recycled pid
+// would murder some unrelated app. Windows only; other platforms skip.
+async function pidImageName(pid) {
+  if (!plat.isWindows()) return "";
+  try {
+    const out = await execFileText("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"]);
+    const m = String(out).match(/^"([^"]+)"/);
+    return m ? m[1].toLowerCase() : "";
+  } catch {
+    return "";
+  }
+}
+
 async function liveInjectorPid() {
   const ds = readJsonSafe(DS_STATE);
   const pid = ds && Number(ds.injectorPid);
@@ -364,7 +384,15 @@ async function cmdInject() {
 }
 
 function startSupervisorLoop({ log = () => {}, intervalMs = 4000 } = {}) {
+  let busy = false;
   return setInterval(async () => {
+    // Ownership check - see startBridgeLoop: a foreground `codexskin start`
+    // must not fight the registered hook-spawned supervisor over the injector.
+    const owner = readJsonSafe(SKIN_STATE) ?? {};
+    const ownerPid = Number(owner.supervisePid) || 0;
+    if (ownerPid && ownerPid !== process.pid && (await processAlive(ownerPid))) return;
+    if (busy) return;
+    busy = true;
     try {
       const endpoint = await discoverCdp();
       if (!endpoint) return;
@@ -378,6 +406,8 @@ function startSupervisorLoop({ log = () => {}, intervalMs = 4000 } = {}) {
       await startInjector(endpoint);
     } catch (e) {
       console.error(`[codexskin] supervisor: ${e.message}`);
+    } finally {
+      busy = false;
     }
   }, intervalMs);
 }
@@ -395,7 +425,7 @@ async function openThemesDir() {
 
 function openGallery(url) {
   const target = String(url ?? GALLERY_URL);
-  if (!target.startsWith(URL_PREFIX_ALLOW) && !target.startsWith(URL_PREFIX_ALLOW_REPO)) {
+  if (!isAllowedExternalUrl(target)) {
     throw new Error(`only ${URL_PREFIX_ALLOW} or ${URL_PREFIX_ALLOW_REPO} URLs may be opened from the bridge`);
   }
   plat.openUrl(target);
@@ -498,8 +528,13 @@ async function restartCodexStack() {
   const killed = [];
   const hostPid = Number(skin.codexHostPid) || 0;
   if (hostPid && (await processAlive(hostPid))) {
-    await plat.killTree(hostPid, execFileText).catch(() => {});
-    killed.push(hostPid);
+    const img = await pidImageName(hostPid);
+    if (!img || /node|codexhost/i.test(img)) {
+      await plat.killTree(hostPid, execFileText).catch(() => {});
+      killed.push(hostPid);
+    } else {
+      console.log(`[codexskin] restart: state codexHostPid ${hostPid} is now "${img}" (pid reused) - not killing it.`);
+    }
   }
   // Desktop may have been started outside codexhost (or re-parented out of
   // the codexhost tree) - sweep any remaining ChatGPT.exe processes too.
@@ -835,6 +870,10 @@ async function pumpBridgeOnce(endpoint) {
             value = await handleBridgeCommand(String(item?.action ?? ""), item?.payload ?? null);
           } catch (e) {
             error = String(e?.message ?? e);
+            // Surface action failures in the supervisor log - a silently
+            // swallowed "unknown bridge action" is undiagnosable from a
+            // diagnostics bundle (this exact bug: stale supervisor + new page).
+            console.log(`[codexskin] bridge action "${item?.action}" failed: ${error}`);
           }
           await browser.evaluateInTarget(
             target.targetId,
@@ -896,11 +935,31 @@ async function cmdSupervise() {
   const timer = startSupervisorLoop({ log: (...a) => console.log(...a) });
   // NOTE: do NOT unref these intervals - they are what keeps this daemon alive.
   const bridge = startBridgeLoop({ log: (...a) => console.log(...a) });
+  // Self-update: the runtime cli.mjs can be replaced underneath a long-lived
+  // supervisor (npm update / repo install). Without this, the old process
+  // keeps answering bridge actions with stale code forever - the hook's
+  // "already running" check prevents any replacement while it lives. Instead,
+  // hand over: release the state pid, spawn a fresh supervisor (which loads
+  // the NEW code and re-claims ownership), then exit. ~2s bridge downtime.
+  const cliSelf = fileURLToPath(import.meta.url);
+  const cliMtimeAtBoot = fs.statSync(cliSelf).mtimeMs;
   const heartbeat = setInterval(() => {
     const s = readJsonSafe(SKIN_STATE);
-    if (s && Number(s.supervisePid) === process.pid) return;
-    origLog("[codexskin] supervise pid removed from state; exiting.");
-    process.exit(0);
+    if (!s || Number(s.supervisePid) !== process.pid) {
+      origLog("[codexskin] supervise pid removed from state; exiting.");
+      process.exit(0);
+    }
+    try {
+      if (fs.statSync(cliSelf).mtimeMs > cliMtimeAtBoot + 1000) {
+        origLog("[codexskin] runtime cli.mjs changed on disk; handing over to a fresh supervisor...");
+        writeJsonNoBom(SKIN_STATE, { ...s, supervisePid: 0 });
+        const next = spawn(process.execPath, [cliSelf, "supervise"], {
+          detached: true, stdio: "ignore", windowsHide: true,
+        });
+        next.unref();
+        setTimeout(() => process.exit(0), 2000);
+      }
+    } catch { /* stat failed - keep running */ }
   }, 15000);
   void timer;
   void bridge;

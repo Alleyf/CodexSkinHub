@@ -461,7 +461,15 @@
           restartArmed = false;
           setRestartButton("Restarting...", true);
           setNotice("Restarting Codex Desktop - it will reopen automatically in a few seconds and the theme will be re-applied.", "info", true);
-          try { await window.__codexskin.request("restart"); } catch { /* expected: the page dies mid-request */ }
+          try { await window.__codexskin.request("restart"); }
+          catch (e) {
+            // A fast error (e.g. a stale supervisor that predates this action)
+            // arrives while the page is still alive - show it instead of
+            // leaving the "Restarting..." notice up forever. The expected
+            // 20s timeout from the page dying mid-request lands here too,
+            // but by then Codex is closed anyway.
+            if (!disposed) setNotice(`Restart request failed: ${errText(e)}. Codex was not restarted - update codexskin and try again.`, "error");
+          }
         });
 
         // Star on GitHub - opens the repo in the default browser.
