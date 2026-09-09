@@ -327,7 +327,7 @@ async function listThemes() {
     if (!d.isDirectory()) continue;
     const manifest = readJsonSafe(path.join(THEMES_DIR, d.name, "theme.json"));
     if (!manifest) continue;
-    entries.push({ dir: d.name, id: String(manifest.id ?? d.name), name: String(manifest.name ?? d.name) });
+    entries.push({ dir: d.name, id: String(manifest.id ?? d.name), name: String(manifest.name ?? d.name), revision: String(manifest.revision ?? "") });
   }
   return { activeId, entries };
 }
@@ -373,6 +373,38 @@ async function switchTheme(query) {
   } catch (e) {
     die(e.message);
   }
+}
+
+// Remove an installed theme from the store. Deleting the ACTIVE theme is
+// allowed but deactivates it first: the active-theme directory is cleared so
+// the injector falls back to the stock Codex look instead of styling from a
+// folder that no longer exists (the engine hard-fails on a missing
+// active-theme manifest - see the ENOENT background.png rejects in bundles).
+async function deleteTheme(query) {
+  const { activeId, entries } = await listThemes();
+  if (entries.length === 0) throw new Error(`no themes found in ${THEMES_DIR}`);
+  const q = String(query ?? "").toLowerCase().trim();
+  if (!q) throw new Error("theme name or id required");
+  const theme = entries.find((t) => t.dir.toLowerCase() === q || t.id.toLowerCase() === q)
+    ?? entries.find((t) => t.name.toLowerCase() === q)
+    ?? entries.find((t) => t.name.toLowerCase().includes(q) || t.dir.toLowerCase().includes(q));
+  if (!theme) throw new Error(`theme not found: "${query}". Run "codexskin theme" to list installed themes.`);
+
+  const wasActive = theme.id === activeId;
+  await fsp.rm(path.join(THEMES_DIR, theme.dir), { recursive: true, force: true });
+  if (wasActive) {
+    // Deactivate: empty the active-theme copy. The injector logs "active
+    // theme (none)" / keeps the stock look; no dangling references remain.
+    await fsp.rm(THEME_DIR, { recursive: true, force: true });
+    const skin = readJsonSafe(SKIN_STATE) ?? {};
+    delete skin.lastTheme;
+    writeJsonNoBom(SKIN_STATE, skin);
+    console.log(`[codexskin] deleted active theme "${theme.name}" (${theme.id}) - theme deactivated`);
+  } else {
+    console.log(`[codexskin] deleted theme "${theme.name}" (${theme.id})`);
+  }
+  void logFile(`theme deleted: ${theme.id} (was active: ${wasActive})`);
+  return { id: theme.id, name: theme.name, wasActive };
 }
 
 async function cmdInject() {
@@ -937,6 +969,11 @@ async function handleBridgeCommand(action, payload) {
   if (action === "switch") {
     const theme = await applyTheme(String(payload?.id ?? payload?.query ?? ""));
     return { activeId: theme.id, name: theme.name };
+  }
+  if (action === "delete-theme") {
+    const r = await deleteTheme(String(payload?.id ?? payload?.query ?? ""));
+    const after = await listThemes();
+    return { deleted: r, activeId: after.activeId, entries: after.entries };
   }
   if (action === "status") return bridgeStatus();
   if (action === "open-dir") return openThemesDir();
@@ -1603,6 +1640,7 @@ async function cmdSetup(flags = {}) {
 export {
   listThemes,
   applyTheme,
+  deleteTheme,
   openThemesDir,
   openGallery,
   pickZipViaDialog,
@@ -1635,6 +1673,13 @@ if (invokedDirectly) {
     else if (cmd === "stop-supervise") await stopSupervisor();
     else if (cmd === "theme") await cmdTheme(rest);
     else if (cmd === "list") await cmdTheme([]);
+    else if (cmd === "remove-theme" || cmd === "uninstall-theme") {
+      try {
+        await deleteTheme(rest[0]);
+      } catch (e) {
+        die(e.message);
+      }
+    }
     else if (cmd === "status") await cmdStatus();
     else if (cmd === "inject") await cmdInject();
     else if (cmd === "down") await cmdDown();
@@ -1655,6 +1700,7 @@ if (invokedDirectly) {
       console.log("  codexskin supervise                standalone injector supervisor (used by codexhost hook)");
       console.log("  codexskin theme [<name>]           switch theme live / list themes");
       console.log("  codexskin import                   pick a theme ZIP and install it into the store");
+      console.log("  codexskin remove-theme <name|id>   uninstall a theme (aliases: uninstall-theme)");
       console.log("  codexskin dir                      open the theme store folder in Explorer");
       console.log("  codexskin gallery                  open dreamskin.cc/gallery in the browser");
       console.log("  codexskin status                   show endpoint / injector / theme state");

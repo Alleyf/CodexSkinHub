@@ -39,6 +39,7 @@
     const icons = {
       folder: '<path d="M1.5 3.5h4.2l1.5 2h7.3v7.5h-13z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>',
       zip: '<path d="M8 1.8v6.7m0 0L4.9 5.4M8 8.5l3.1-3.1M2.2 12.7h11.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
+      trash: '<path d="M2.6 4.2h10.8M6.4 4V2.8a.9.9 0 0 1 .9-.9h1.4a.9.9 0 0 1 .9.9V4M3.8 4.2l.6 8.4a1.2 1.2 0 0 0 1.2 1.1h4.8a1.2 1.2 0 0 0 1.2-1.1l.6-8.4M6.5 6.8v4.4M9.5 6.8v4.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>',
       external: '<path d="M6.8 2.6H2.6v10.8h10.8V9.2M9.4 2h4.6v4.6M13.6 2.4 7.6 8.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
       check: '<path d="M2.8 8.6l3.4 3.4 7-8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
       palette: '<path d="M8 1.8a6.2 6.2 0 1 0 0 12.4c1 0 1.6-.7 1.6-1.5 0-1.5 1.2-1.7 2.4-1.7 1.4 0 2.2-1 2.2-2.4A6.2 6.2 0 0 0 8 1.8z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="5.1" cy="6.3" r="1" fill="currentColor"/><circle cx="8" cy="4.7" r="1" fill="currentColor"/><circle cx="10.9" cy="6.3" r="1" fill="currentColor"/>',
@@ -76,6 +77,11 @@
 .ds-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .ds-name { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ds-active-badge { display: inline-flex; align-items: center; gap: 4px; flex: none; padding: 1px 8px; border-radius: 999px; background: var(--settings-focus); color: #fff; font-size: 10.5px; font-weight: 600; letter-spacing: .02em; }
+.ds-del { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--settings-muted); cursor: pointer; opacity: 0; transition: opacity .14s ease, background .14s ease, color .14s ease; font: inherit; }
+.ds-card:hover .ds-del, .ds-del:focus-visible { opacity: .75; }
+.ds-del:hover { opacity: 1 !important; background: color-mix(in srgb, #e5484d 16%, transparent); color: #e5484d; }
+.ds-del.confirm { opacity: 1 !important; background: #e5484d; color: #fff; }
+.ds-del:disabled { opacity: .4 !important; cursor: default; }
 .ds-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--settings-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ds-hint { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--settings-muted); opacity: .7; transition: opacity .14s ease, color .14s ease; }
 .ds-card:not(.active):hover .ds-hint { opacity: 1; color: var(--settings-focus); }
@@ -250,6 +256,12 @@
               const badge = codexskinEl(document2, "span", "ds-active-badge");
               badge.append(codexskinSvg(document2, "check"), document2.createTextNode("Active"));
               head.append(badge);
+            } else {
+              const btnDel = codexskinEl(document2, "button", "ds-del");
+              btnDel.type = "button";
+              btnDel.title = "Uninstall this theme";
+              btnDel.append(codexskinSvg(document2, "trash"));
+              head.append(btnDel);
             }
             const hint = codexskinEl(document2, "span", "ds-hint", isActive ? "Currently applied" : "Click to apply");
             card.append(head, codexskinEl(document2, "span", "ds-id", theme.id), hint);
@@ -271,6 +283,28 @@
               }
             });
             grid.append(card);
+            btnDel.addEventListener("click", async (ev) => {
+              ev.stopPropagation();
+              if (btnDel.dataset.confirming !== "1") {
+                btnDel.dataset.confirming = "1";
+                btnDel.classList.add("confirm");
+                btnDel.title = "Click again to confirm deletion";
+                setTimeout(() => { if (btnDel.isConnected) { delete btnDel.dataset.confirming; btnDel.classList.remove("confirm"); btnDel.title = "Uninstall this theme"; } }, 4000);
+                return;
+              }
+              btnDel.disabled = true;
+              setNotice("", "", false);
+              try {
+                const r = await window.__codexskin.request("delete-theme", { id: theme.id });
+                setNotice(r?.deleted?.wasActive
+                  ? `Deleted "${theme.name}" - theme deactivated (stock Codex look).`
+                  : `Deleted "${theme.name}".`, "ok");
+              } catch (e) {
+                setNotice(`Delete failed: ${errText(e)}`, "error");
+              }
+              await loadList();
+              await loadState();
+            });
           }
         };
 
