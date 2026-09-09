@@ -383,6 +383,53 @@ async function cmdInject() {
   console.log("[codexskin] done.");
 }
 
+// Code-replacement guard. v0.3.8's ownership deferral only steps aside while
+// the registered supervisor is ALIVE; once it dies, any other long-lived
+// process still running the OLD code (typically a foreground `codexskin
+// start` launched before an update) starts answering the page queue again -
+// which is how "unknown bridge action" shows up for features the installed
+// version does have. Detect that the file we were loaded from has been
+// overwritten since we booted, and hand control to a fresh supervisor.
+const PROC_START_MS = Date.now() - process.uptime() * 1000;
+let staleHandled = false;
+
+function selfCodeStale() {
+  try {
+    // 2s tolerance: fs mtime granularity vs process start time.
+    return fs.statSync(fileURLToPath(import.meta.url)).mtimeMs > PROC_START_MS + 2000;
+  } catch {
+    return false;
+  }
+}
+
+// Returns true when the caller must stop making decisions this round.
+// Processes that are not the registered owner spawn a replacement supervisor
+// themselves; the owner has its own self-heal (v0.3.9) which respawns and
+// exits, so it must not double-spawn.
+async function yieldIfStale(log = () => {}) {
+  if (!selfCodeStale()) return false;
+  if (!staleHandled) {
+    staleHandled = true;
+    const s = readJsonSafe(SKIN_STATE) ?? {};
+    const ownerPid = Number(s.supervisePid) || 0;
+    if (ownerPid === process.pid) {
+      // We ARE the owner: the v0.3.9 self-heal heartbeat respawns and exits.
+      // Spawning here too would race it for the same ownership slot.
+      log("[codexskin] this supervisor runs code that was replaced on disk - self-heal will hand over");
+    } else if (ownerPid && (await processAlive(ownerPid))) {
+      log("[codexskin] this process runs code that was replaced on disk - deferring to the current supervisor");
+    } else {
+      const cli = fs.existsSync(path.join(HUB_ROOT, "src", "cli.mjs"))
+        ? path.join(HUB_ROOT, "src", "cli.mjs")
+        : fileURLToPath(import.meta.url);
+      const child = spawn(process.execPath, [cli, "supervise"], { detached: true, stdio: "ignore", windowsHide: true });
+      child.unref();
+      log(`[codexskin] this process runs code that was replaced on disk - spawned a fresh supervisor (pid ${child.pid})`);
+    }
+  }
+  return true;
+}
+
 function startSupervisorLoop({ log = () => {}, intervalMs = 4000 } = {}) {
   let busy = false;
   // Churn observability: remember the injector we last saw/born so that when
@@ -393,6 +440,7 @@ function startSupervisorLoop({ log = () => {}, intervalMs = 4000 } = {}) {
   return setInterval(async () => {
     // Ownership check - see startBridgeLoop: a foreground `codexskin start`
     // must not fight the registered hook-spawned supervisor over the injector.
+    if (await yieldIfStale(log)) return;
     const owner = readJsonSafe(SKIN_STATE) ?? {};
     const ownerPid = Number(owner.supervisePid) || 0;
     if (ownerPid && ownerPid !== process.pid && (await processAlive(ownerPid))) return;
@@ -959,6 +1007,10 @@ function startBridgeLoop({ log = () => {}, intervalMs = 1500 } = {}) {
   let busy = false;
   return setInterval(async () => {
     if (busy) return;
+    // Stale-code guard: see yieldIfStale. Without it, a `codexskin start`
+    // from before an update wins the race whenever no supervisor is alive
+    // and answers the page with code that predates the installed release.
+    if (await yieldIfStale(log)) return;
     // Ownership check: a foreground `codexskin start` runs this loop in its
     // own process while the dedicated supervisor (hook-spawned) also pumps.
     // Two pollers splice the same page queue, so requests get answered by
@@ -1114,6 +1166,13 @@ async function cmdSupervise() {
     try {
       if (fs.statSync(cliSelf).mtimeMs > cliMtimeAtBoot + 1000) {
         origLog("[codexskin] runtime cli.mjs changed on disk; handing over to a fresh supervisor...");
+        // origLog only reaches stdout; the handover must be visible in the
+        // diagnostics bundle too (it explains a supervisor pid change there).
+        void logFile("runtime cli.mjs changed on disk; handing over to a fresh supervisor");
+        // Claim the guard before spawning: the bridge/supervisor loops below
+        // share the staleHandled flag and would otherwise spawn a second
+        // replacement for the same handover (they see the pid we just cleared).
+        staleHandled = true;
         writeJsonNoBom(SKIN_STATE, { ...s, supervisePid: 0 });
         const next = spawn(process.execPath, [cliSelf, "supervise"], {
           detached: true, stdio: "ignore", windowsHide: true,
