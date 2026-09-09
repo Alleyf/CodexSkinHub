@@ -252,12 +252,17 @@
             card.className = "ds-card" + (isActive ? " active" : "");
             const head = codexskinEl(document2, "div", "ds-card-head");
             head.append(codexskinEl(document2, "span", "ds-name", theme.name ?? theme.id));
+            // Declared here, not inside the else branch: its click handler is
+            // bound further down, outside that block scope (a const declared
+            // in the branch is invisible there -> ReferenceError at runtime,
+            // which `node --check` cannot catch).
+            let btnDel = null;
             if (isActive) {
               const badge = codexskinEl(document2, "span", "ds-active-badge");
               badge.append(codexskinSvg(document2, "check"), document2.createTextNode("Active"));
               head.append(badge);
             } else {
-              const btnDel = codexskinEl(document2, "button", "ds-del");
+              btnDel = codexskinEl(document2, "button", "ds-del");
               btnDel.type = "button";
               btnDel.title = "Uninstall this theme";
               btnDel.append(codexskinSvg(document2, "trash"));
@@ -283,7 +288,7 @@
               }
             });
             grid.append(card);
-            btnDel.addEventListener("click", async (ev) => {
+            if (btnDel) btnDel.addEventListener("click", async (ev) => {
               ev.stopPropagation();
               if (btnDel.dataset.confirming !== "1") {
                 btnDel.dataset.confirming = "1";
@@ -322,23 +327,35 @@
           }
         };
 
+        const bridgeDown = (e) => {
+          if (!disposed) setNotice(`Dream Skin engine is not reachable: ${errText(e)}. Start Codex via codexhost (the supervisor runs automatically) and retry.`, "error");
+        };
+        // Rendering errors are bugs in THIS page, not a missing supervisor.
+        // Reporting them as "engine is not reachable" (what one catch-all
+        // block used to do) sends every debugging session the wrong way - a
+        // ReferenceError inside renderGrid is not a connectivity problem.
+        const renderBroke = (e) => {
+          if (!disposed) setNotice(`Theme page error: ${errText(e)}`, "error");
+        };
         const loadState = async () => {
+          let status;
           try {
-            const status = await window.__codexskin.request("status");
+            status = await window.__codexskin.request("status");
+          } catch (e) { bridgeDown(e); return; }
+          try {
             if (disposed) return;
             renderChips(status);
             applyImportState(status.lastImport);
-          } catch (e) {
-            if (!disposed) setNotice(`Dream Skin engine is not reachable: ${errText(e)}. Start Codex via codexhost (the supervisor runs automatically) and retry.`, "error");
-          }
+          } catch (e) { renderBroke(e); }
         };
         const loadList = async () => {
+          let result;
           try {
-            const result = await window.__codexskin.request("list");
+            result = await window.__codexskin.request("list");
+          } catch (e) { bridgeDown(e); return; }
+          try {
             if (!disposed) renderGrid(result);
-          } catch (e) {
-            if (!disposed) setNotice(`Dream Skin engine is not reachable: ${errText(e)}. Start Codex via codexhost (the supervisor runs automatically) and retry.`, "error");
-          }
+          } catch (e) { renderBroke(e); }
         };
 
         btnDir.addEventListener("click", async () => {
