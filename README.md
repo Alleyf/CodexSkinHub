@@ -183,6 +183,8 @@ src/patch.mjs             锚点式幂等补丁器：apply / status / --revert
 src/discover.mjs          定位全局 @codexhost/cli（兼容 nvm-windows / 自定义 npm prefix）
 src/payload/renderer.js   应用内 Dream Skin 设置页载荷
 src/tools/ui-verify.mjs   CDP 截图驱动（UI 验证）
+src/tools/patch-sandbox-test.mjs  补丁回归测试：沙箱内 apply/幂等/revert/双模式语法检查
+src/tools/check-payload-render.cjs  设置页载荷运行时冒烟测试
 install.mjs / uninstall.mjs
 ```
 
